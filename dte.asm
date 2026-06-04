@@ -6,12 +6,12 @@
 ; |  _  // _ \ __| '__/ _ \|  ___/ _` |/ _` |
 ; | | \ \  __/ |_| | | (_) | |  | (_| | (_| |
 ; |_|  \_\___|\__|_|  \___/|_|   \__,_|\__,_|
-;                                            
+; T I N Y  X 86   D E S K T O P   E D I T O R                                            
+; --------------------------------------------------------- 
 ; (c) 2026 Plummer's Software, Ltd.
 ; Based on Dave's Tiny Editor 2.0.9 
 ;  which was
 ; Based on Dave Plummer's Tiny App
-;
 ; ---------------------------------------------------------
 ; Dave's Tiny Editor (DTE)
 ; Copyright (c) 2026 Matthew M. Power
@@ -32,7 +32,8 @@
 ; Added EDIT Find/FindNext/Replace - 2143 Bytes
 ; Added FILE Print - 2476 Bytes
 ; Added VIEW Status Bar (Ln/Col) - 2476 Bytes
-
+; Added DIALOG based Feature - 2686 Bytes
+;
 ; Compiler directives and includes:
  
 .386                       ; Full 80386 instruction set and mode
