@@ -2257,6 +2257,15 @@ WndProc proc hWnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
 
     ; check for WM_DESTROY
     NotWMSize:
+	    cmp     uMsg, WM_SETFOCUS
+	    jne     NotWMSetFocus
+	    mov     eax, hEdit
+	    push    eax
+	    call    [_imp__SetFocus@4]
+	    xor     eax, eax
+	    ret
+	    
+	NotWMSetFocus:
         cmp     uMsg, WM_DESTROY
         jne     NotWMDestroy
 
