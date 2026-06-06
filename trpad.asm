@@ -184,9 +184,10 @@ EXTERN _imp__DestroyMenu@4         :PTR ; free a menu handle
 EXTERN _imp__GetMessagePos@0       :PTR ; screen coords of last msg
 EXTERN _imp__GetKeyState@4         :PTR ; shortcut modifier state
 EXTERN _imp__SendMessageA@16       :PTR ; talk to EDIT control
+EXTERN _imp__SendMessageW@16       :PTR ; talk to EDIT control
 EXTERN _imp__ChooseFontW@4         :PTR ; common font picker dialog
-EXTERN _imp__FindTextA@4           :PTR ; common Find dialog
-EXTERN _imp__ReplaceTextA@4        :PTR ; common Replace dialog
+EXTERN _imp__FindTextW@4           :PTR ; common Find dialog
+EXTERN _imp__ReplaceTextW@4        :PTR ; common Replace dialog
 EXTERN _imp__RegisterWindowMessageA@4 :PTR ; FINDMSGSTRING message id
 EXTERN _imp__IsDialogMessageA@8    :PTR ; route keys to find dialog
 EXTERN _imp__PrintDlgA@4           :PTR ; common Print dialog (returns DC)
@@ -870,13 +871,12 @@ DoFindNext proc NEAR
     mov     ft.lpstrText, eax
 
     mov     eax, fr.Flags
-    and     eax, FR_MATCHCASE
-    or      eax, FR_DOWN
+    and     eax, FR_MATCHCASE or FR_WHOLEWORD or FR_DOWN 
 
     lea     edx, ft
     push    edx
     push    eax
-    push    EM_FINDTEXTEXA
+    push    EM_FINDTEXTEXW
     mov     edx, hEdit
     push    edx
     call    [_imp__SendMessageA@16]
@@ -900,6 +900,10 @@ DoFindNext proc NEAR
     push    edx
     call    [_imp__SendMessageA@16]
 
+	mov     eax, hEdit
+	push    eax
+	call    [_imp__SetFocus@4]
+
     push    1
     pop     eax
     ret
@@ -918,7 +922,7 @@ DoReplaceOne proc NEAR
     push    EM_REPLACESEL
     mov     eax, hEdit
     push    eax
-    call    [_imp__SendMessageA@16]
+    call    [_imp__SendMessageW@16]
     call    DoFindNext
     ret
 DoReplaceOne endp
@@ -949,7 +953,7 @@ DoReplaceAll proc NEAR
     push    EM_REPLACESEL
     mov     edx, hEdit
     push    edx
-    call    [_imp__SendMessageA@16]
+    call    [_imp__SendMessageW@16]
     jmp     RepLoop
 
   RepDone:
@@ -2005,7 +2009,7 @@ ENDIF
 
     ; EDIT control (class "RICHEDIT50W")
     mov     eax, WS_CHILD or WS_VISIBLE or WS_BORDER or ES_LEFT \
-                 or ES_MULTILINE or ES_AUTOVSCROLL or WS_VSCROLL
+                 or ES_MULTILINE or ES_AUTOVSCROLL or WS_VSCROLL or ES_NOHIDESEL
 
     ; create EDIT control
     EditStyleReady:
@@ -2406,7 +2410,7 @@ ENDIF
         call    InitFR
         lea     eax, fr
         push    eax
-        call    [_imp__FindTextA@4]
+        call    [_imp__FindTextW@4]
         mov     hFindDlg, eax
         xor     eax, eax
         ret
@@ -2420,7 +2424,7 @@ ENDIF
         call    InitFR
         lea     eax, fr
         push    eax
-        call    [_imp__ReplaceTextA@4]
+        call    [_imp__ReplaceTextW@4]
         mov     hFindDlg, eax
         xor     eax, eax
         ret
