@@ -47,6 +47,7 @@ option casemap:none        ; Preserve the case of system identifiers but not our
 ; for-byte the original baseline build (2686 bytes); a feature
 ; only costs space when it is switched on.
 FEAT_LINENUMBERS = 1       ; View > Line Numbers gutter (default OFF)
+FEAT_DARKMODE    = 1       ; View > Dark Mode (default OFF)
 ; ==========================================================
 
 ; Include files - headers and libs that we need for
@@ -131,6 +132,20 @@ LN_PAD           equ 6            ; left padding of the numbers
 IDM_VIEW_LINENUM equ 0E231h       ; View > Line Numbers command id
 ENDIF
 
+IF FEAT_DARKMODE
+; ---- constants used only by the Dark Mode feature ----
+IFNDEF CFM_COLOR
+CFM_COLOR        equ 40000000h
+ENDIF
+IFNDEF CFE_AUTOCOLOR
+CFE_AUTOCOLOR    equ 40000000h
+ENDIF
+EM_SETBKGNDCOLOR equ WM_USER+67   ; Rich Edit: set background color
+DARK_BG          equ 001E1E1Eh    ; gutter/edit dark background (00BBGGRR)
+DARK_FG          equ 00DCDCDCh    ; light text on dark
+IDM_VIEW_DARK    equ 0E232h       ; View > Dark Mode command id
+ENDIF
+
 .DATA
 
 EXTERN _imp__CreateWindowExA@48    :PTR ; create main window / EDIT control
@@ -199,6 +214,11 @@ EXTERN _imp__GetSysColorBrush@4    :PTR ; gutter background brush
 EXTERN _imp__InvalidateRect@12     :PTR ; force gutter repaint
 EXTERN _imp__SetBkMode@8           :PTR ; transparent number text
 EXTERN _imp__TextOutA@20           :PTR ; draw the line numbers
+ENDIF
+
+IF FEAT_DARKMODE
+EXTERN _imp__GetMenu@4             :PTR ; menu bar for the check mark
+EXTERN _imp__CheckMenuItem@12      :PTR ; check/uncheck Dark Mode
 ENDIF
 
 ClassName   db ".",0                ; save bytes here (seems to work)
@@ -278,6 +298,11 @@ IF FEAT_LINENUMBERS
 fLineNum    dd 0                   ; line-number gutter visible flag (default OFF)
 LnNumFmt    db "%d",0              ; gutter number format
 MLineNum    db "Line &Numbers",0   ; View menu label
+ENDIF
+
+IF FEAT_DARKMODE
+fDark       dd 0                   ; dark mode flag (default OFF)
+MDarkMode   db "Dark &Mode",0      ; View menu label
 ENDIF
 
 hInst       dd 0                   ; module handle (for dialogs)
@@ -1536,6 +1561,12 @@ IF FEAT_LINENUMBERS
     push    hPopup
     call    AppendEnabled
 ENDIF
+IF FEAT_DARKMODE
+    push    OFFSET MDarkMode
+    push    IDM_VIEW_DARK
+    push    hPopup
+    call    AppendEnabled
+ENDIF
     push    OFFSET MView
     mov     eax, hPopup
     push    eax
@@ -1888,6 +1919,9 @@ IF FEAT_LINENUMBERS
     LOCAL   pt:POINT
     LOCAL   nbuf[16]:BYTE
 ENDIF
+IF FEAT_DARKMODE
+    LOCAL   dfmt:CHARFORMATW
+ENDIF
 
 IF FEAT_LINENUMBERS
     ; line-number gutter: intercept WM_PAINT
@@ -2161,6 +2195,10 @@ IF FEAT_LINENUMBERS
         cmp     eax, IDM_VIEW_LINENUM
         je      CmdViewLineNum
 ENDIF
+IF FEAT_DARKMODE
+        cmp     eax, IDM_VIEW_DARK
+        je      CmdViewDark
+ENDIF
         cmp     eax, IDM_HELP_ABOUT
         je      CmdHelpAbout
         cmp     eax, IDM_HELP_VIEWHELP
@@ -2366,6 +2404,69 @@ IF FEAT_LINENUMBERS
     LnScrolled:
         push    hWnd
         call    LnInvalidate
+        xor     eax, eax
+        ret
+ENDIF
+
+IF FEAT_DARKMODE
+    ; toggle dark mode: recolor the Rich Edit, check the menu item
+    CmdViewDark:
+        mov     eax, fDark
+        xor     eax, 1
+        mov     fDark, eax
+
+        ; clear the CHARFORMATW we are about to send
+        xor     eax, eax
+        lea     edi, dfmt
+        mov     ecx, (SIZEOF CHARFORMATW)/4
+        rep     stosd
+        mov     dfmt.cbSize, SIZEOF CHARFORMATW
+        mov     dfmt.dwMask, CFM_COLOR
+
+        cmp     fDark, 0
+        je      DarkOff
+
+        ; dark on: dark background + light text
+        push    DARK_BG
+        push    0                      ; wParam 0 = use given color
+        push    EM_SETBKGNDCOLOR
+        mov     eax, hEdit
+        push    eax
+        call    [_imp__SendMessageA@16]
+        mov     dfmt.crTextColor, DARK_FG
+        jmp     DarkApply
+
+    DarkOff:
+        ; dark off: system background + auto (default) text color
+        push    0
+        push    1                      ; wParam 1 = system window color
+        push    EM_SETBKGNDCOLOR
+        mov     eax, hEdit
+        push    eax
+        call    [_imp__SendMessageA@16]
+        mov     dfmt.dwEffects, CFE_AUTOCOLOR
+
+    DarkApply:
+        lea     eax, dfmt
+        push    eax
+        push    SCF_ALL
+        push    EM_SETCHARFORMAT
+        mov     eax, hEdit
+        push    eax
+        call    [_imp__SendMessageA@16]
+
+        ; reflect the new state with a check mark in the View menu
+        mov     edx, MF_BYCOMMAND
+        cmp     fDark, 0
+        je      DarkChkReady
+        or      edx, MF_CHECKED
+    DarkChkReady:
+        push    edx                    ; uCheck
+        push    IDM_VIEW_DARK          ; uIDCheckItem
+        push    hWnd
+        call    [_imp__GetMenu@4]      ; eax = menu bar handle
+        push    eax
+        call    [_imp__CheckMenuItem@12]
         xor     eax, eax
         ret
 ENDIF
