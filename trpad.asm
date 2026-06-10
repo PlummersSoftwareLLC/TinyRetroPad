@@ -41,7 +41,7 @@
 ;   and Find/Replace fix - 3255 Bytes (@jdp1024)
 ; Added
 ; - keep window placement - 3332 Bytes (@jdp1024)
-; Added comctl32 6 activation - 3682 Bytes (@jdp1024)
+; Added comctl32 6 activation - 3423 Bytes (@jdp1024)
 
 ; Compiler directives and includes:
  
@@ -190,9 +190,7 @@ EXTERN _imp__CreateActCtxA@4       :PTR ; create activation context from manifes
 EXTERN _imp__ActivateActCtx@8      :PTR ; activate common-controls v6 manifest
 EXTERN _imp__DeactivateActCtx@8    :PTR ; release activation cookie on exit
 EXTERN _imp__ReleaseActCtx@4       :PTR ; free activation-context handle
-EXTERN _imp__GetTempPathA@8        :PTR ; temp directory for runtime manifest
-EXTERN _imp__GetTempFileNameA@16   :PTR ; unique temp manifest filename
-EXTERN _imp__DeleteFileA@4         :PTR ; remove temp manifest on exit
+EXTERN _imp__GetWindowsDirectoryA@8 :PTR ; Windows directory for explorer.exe path
 EXTERN _imp__SetWindowTextA@8      :PTR ; set title / EDIT text
 EXTERN _imp__GetSystemMenu@8       :PTR ; get system menu
 EXTERN _imp__AppendMenuA@16        :PTR ; add Save menu item
@@ -263,10 +261,10 @@ EXTERN _imp__GetMenu@4             :PTR ; menu bar for the check mark
 EXTERN _imp__CheckMenuItem@12      :PTR ; check/uncheck Dark Mode
 ENDIF
 
-User32Str           db "user32.dll",0       ; for LoadLibrary
-DPIFunc             db "SetProcessDpiAwarenessContext",0 ; enable DPI awareness v2
-RegPathWinPlace     db "SOFTWARE\TinyRetroPad",0
-RegKeyWinPlace      db "WP",0
+User32Str           db "user32",0                           ; for LoadLibrary
+DPIFunc             db "SetProcessDpiAwarenessContext",0    ; enable DPI awareness v2
+RegPathWinPlace     db "SOFTWARE\TinyRetroPad",0            ; registry path
+RegKeyWinPlace      db "WP",0                               ; registry key
 
 ClassName   db ".",0                ; save bytes here (seems to work)
 RichDll     db "Msftedit",0         ; Rich Edit DLL (no ext saves those bytes)
@@ -275,19 +273,9 @@ SaveText    db "Save",0             ; button added to system menu
 EmptyText   db 0
 
 IF FEAT_COMCTL32V6
-MAX_ACTCTX_PATH     equ 260        ; temp path for runtime manifest file
-ComCtlManifest label byte
-                db '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                db '<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">'
-                db '<assemblyIdentity version="1.0.0.0" processorArchitecture="*" name="trp" type="win32"/>'
-                db '<dependency><dependentAssembly>'
-                db '<assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" '
-                db 'version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" '
-                db 'language="*"/></dependentAssembly></dependency></assembly>',0
-ComCtlManifestEnd label byte
-ActCtxPrefix db "trp",0
-ActCtxPath  db MAX_ACTCTX_PATH dup (0) ; temp directory for manifest bootstrap
-ActCtxFile  db MAX_ACTCTX_PATH dup (0) ; temp manifest file path
+ACTCTX_FLAG_RESOURCE_NAME_VALID equ 8
+ActCtxSuffix db "\explorer.exe",0
+ActCtxSource db MAX_PATH dup (0)    ; filled at runtime: %WinDir%\explorer.exe
 ActCtxH         dd 0                ; active context handle
 ActCtxCookie    dd 0                ; activation cookie for current thread
 ENDIF
@@ -2003,74 +1991,44 @@ SaveFile proc    NEAR
 SaveFile endp ;end SaveFile proc
 
 IF FEAT_COMCTL32V6
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; activate comctl32 v6 from embedded xml     ;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; activate comctl32 v6 from explorer manifest ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 EnableComCtlV6 proc NEAR
     LOCAL ac:ACTCTXA
-    LOCAL hFile:DWORD
 
-    xor     eax, eax
-    mov     hFile, eax
-
-    push    OFFSET ActCtxPath
-    push    MAX_ACTCTX_PATH
-    call    [_imp__GetTempPathA@8]
+    ; get full path of explorer.exe
+    push    MAX_PATH
+    push    OFFSET ActCtxSource
+    call    [_imp__GetWindowsDirectoryA@8]
     test    eax, eax
     je      ActCtxDone
+    mov     edi, OFFSET ActCtxSource
+    add     edi, eax
+    mov     esi, OFFSET ActCtxSuffix
+  ActCtxCopy:
+    mov     al, [esi]
+    mov     [edi], al
+    inc     esi
+    inc     edi
+    test    al, al
+    jnz     ActCtxCopy
 
-    push    OFFSET ActCtxFile
-    push    0
-    push    OFFSET ActCtxPrefix
-    push    OFFSET ActCtxPath
-    call    [_imp__GetTempFileNameA@16]
-    test    eax, eax
-    je      ActCtxDone
-
-    push    NULL
-    push    FILE_ATTRIBUTE_NORMAL
-    push    CREATE_ALWAYS
-    push    NULL
-    push    0
-    push    GENERIC_WRITE
-    push    OFFSET ActCtxFile
-    call    [_imp__CreateFileA@28]
-    cmp     eax, INVALID_HANDLE_VALUE
-    je      ActCtxDelete
-    mov     hFile, eax
-
-    push    NULL
-    lea     eax, BytesRead
-    push    eax
-    mov     eax, OFFSET ComCtlManifestEnd
-    sub     eax, OFFSET ComCtlManifest
-    dec     eax
-    push    eax
-    push    OFFSET ComCtlManifest
-    mov     eax, hFile
-    push    eax
-    call    [_imp__WriteFile@20]
-    test    eax, eax
-    je      ActCtxCloseOnly
-
-    mov     eax, hFile
-    push    eax
-    call    [_imp__CloseHandle@4]
-    xor     eax, eax
-    mov     hFile, eax
-
+    ; then use its manifest resource
     lea     edi, ac
     mov     ecx, (SIZEOF ACTCTXA)/4
     xor     eax, eax
     rep     stosd
     mov     ac.cbSize, SIZEOF ACTCTXA
-    mov     ac.lpSource, OFFSET ActCtxFile
+    mov     ac.dwFlags, ACTCTX_FLAG_RESOURCE_NAME_VALID
+    mov     ac.lpSource, OFFSET ActCtxSource
+    mov     ac.lpResourceName, 1
 
     lea     eax, ac
     push    eax
     call    [_imp__CreateActCtxA@4]
     cmp     eax, INVALID_HANDLE_VALUE
-    je      ActCtxCloseOnly
+    je      ActCtxDone
     mov     ActCtxH, eax
 
     lea     edx, ActCtxCookie
@@ -2079,7 +2037,7 @@ EnableComCtlV6 proc NEAR
     call    [_imp__ActivateActCtx@8]
     test    eax, eax
     je      ActCtxRelease
-    jmp     ActCtxCloseOnly
+    jmp     ActCtxDone
 
 ActCtxRelease:
     mov     eax, ActCtxH
@@ -2087,21 +2045,6 @@ ActCtxRelease:
     call    [_imp__ReleaseActCtx@4]
     xor     eax, eax
     mov     ActCtxH, eax
-
-ActCtxCloseOnly:
-    mov     eax, hFile
-    test    eax, eax
-    je      ActCtxMaybeDelete
-    push    eax
-    call    [_imp__CloseHandle@4]
-ActCtxMaybeDelete:
-    cmp     ActCtxH, 0
-    jne     ActCtxDone
-
-ActCtxDelete:
-    push    OFFSET ActCtxFile
-    call    [_imp__DeleteFileA@4]
-    mov     byte ptr [ActCtxFile], 0
 
 ActCtxDone:
     ret
