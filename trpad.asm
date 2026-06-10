@@ -41,6 +41,8 @@
 ;   and Find/Replace fix - 3255 Bytes (@jdp1024)
 ; Added
 ; - keep window placement - 3332 Bytes (@jdp1024)
+; Added comctl32 6 activation - 3682 Bytes (@jdp1024)
+
 ; Compiler directives and includes:
  
 .386                       ; Full 80386 instruction set and mode
@@ -55,6 +57,7 @@ option casemap:none        ; Preserve the case of system identifiers but not our
 ; only costs space when it is switched on.
 FEAT_LINENUMBERS = 1       ; View > Line Numbers gutter (default ON)
 FEAT_DARKMODE    = 0       ; View > Dark Mode (default OFF)
+FEAT_COMCTL32V6  = 1       ; activate comctl32 6.0 (default ON)
 ; ==========================================================
 
 ; Include files - headers and libs that we need for
@@ -183,6 +186,13 @@ EXTERN _imp__GlobalFree@4          :PTR ; free buffer
 EXTERN _imp__ReadFile@20           :PTR ; read file into EDIT
 EXTERN _imp__WriteFile@20          :PTR ; save EDIT to file
 EXTERN _imp__CloseHandle@4         :PTR ; close file handle
+EXTERN _imp__CreateActCtxA@4       :PTR ; create activation context from manifest path
+EXTERN _imp__ActivateActCtx@8      :PTR ; activate common-controls v6 manifest
+EXTERN _imp__DeactivateActCtx@8    :PTR ; release activation cookie on exit
+EXTERN _imp__ReleaseActCtx@4       :PTR ; free activation-context handle
+EXTERN _imp__GetTempPathA@8        :PTR ; temp directory for runtime manifest
+EXTERN _imp__GetTempFileNameA@16   :PTR ; unique temp manifest filename
+EXTERN _imp__DeleteFileA@4         :PTR ; remove temp manifest on exit
 EXTERN _imp__SetWindowTextA@8      :PTR ; set title / EDIT text
 EXTERN _imp__GetSystemMenu@8       :PTR ; get system menu
 EXTERN _imp__AppendMenuA@16        :PTR ; add Save menu item
@@ -226,7 +236,6 @@ EXTERN _imp__GetDlgItemInt@16      :PTR ; read Go To line number
 EXTERN _imp__EndDialog@8           :PTR ; close Go To dialog
 EXTERN _imp__SetFocus@4            :PTR ; focus edit control after commands
 EXTERN _imp__ExitProcess@4         :PTR ; terminate process cleanly
-EXTERN _imp__SetProcessDpiAwarenessContext@4 :PTR ; set process DPI awared
 EXTERN _imp__GetDC@4               :PTR ; screen DC for UI DPI
 EXTERN _imp__ReleaseDC@8           :PTR ; release screen DC
 EXTERN _imp__SystemParametersInfoA@16 :PTR ; query non-client metrics
@@ -264,6 +273,24 @@ RichDll     db "Msftedit",0         ; Rich Edit DLL (no ext saves those bytes)
 EditClass   db "RICHEDIT50W",0      ; modern Rich Edit control from WinAPI
 SaveText    db "Save",0             ; button added to system menu
 EmptyText   db 0
+
+IF FEAT_COMCTL32V6
+MAX_ACTCTX_PATH     equ 260        ; temp path for runtime manifest file
+ComCtlManifest label byte
+                db '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                db '<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">'
+                db '<assemblyIdentity version="1.0.0.0" processorArchitecture="*" name="trp" type="win32"/>'
+                db '<dependency><dependentAssembly>'
+                db '<assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" '
+                db 'version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" '
+                db 'language="*"/></dependentAssembly></dependency></assembly>',0
+ComCtlManifestEnd label byte
+ActCtxPrefix db "trp",0
+ActCtxPath  db MAX_ACTCTX_PATH dup (0) ; temp directory for manifest bootstrap
+ActCtxFile  db MAX_ACTCTX_PATH dup (0) ; temp manifest file path
+ActCtxH         dd 0                ; active context handle
+ActCtxCookie    dd 0                ; activation cookie for current thread
+ENDIF
 
 hMain       dd 0                    ; main window handle
 hEdit       dd 0                    ; EDIT control handle
@@ -1975,6 +2002,113 @@ SaveFile proc    NEAR
         ret
 SaveFile endp ;end SaveFile proc
 
+IF FEAT_COMCTL32V6
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; activate comctl32 v6 from embedded xml     ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+EnableComCtlV6 proc NEAR
+    LOCAL ac:ACTCTXA
+    LOCAL hFile:DWORD
+
+    xor     eax, eax
+    mov     hFile, eax
+
+    push    OFFSET ActCtxPath
+    push    MAX_ACTCTX_PATH
+    call    [_imp__GetTempPathA@8]
+    test    eax, eax
+    je      ActCtxDone
+
+    push    OFFSET ActCtxFile
+    push    0
+    push    OFFSET ActCtxPrefix
+    push    OFFSET ActCtxPath
+    call    [_imp__GetTempFileNameA@16]
+    test    eax, eax
+    je      ActCtxDone
+
+    push    NULL
+    push    FILE_ATTRIBUTE_NORMAL
+    push    CREATE_ALWAYS
+    push    NULL
+    push    0
+    push    GENERIC_WRITE
+    push    OFFSET ActCtxFile
+    call    [_imp__CreateFileA@28]
+    cmp     eax, INVALID_HANDLE_VALUE
+    je      ActCtxDelete
+    mov     hFile, eax
+
+    push    NULL
+    lea     eax, BytesRead
+    push    eax
+    mov     eax, OFFSET ComCtlManifestEnd
+    sub     eax, OFFSET ComCtlManifest
+    dec     eax
+    push    eax
+    push    OFFSET ComCtlManifest
+    mov     eax, hFile
+    push    eax
+    call    [_imp__WriteFile@20]
+    test    eax, eax
+    je      ActCtxCloseOnly
+
+    mov     eax, hFile
+    push    eax
+    call    [_imp__CloseHandle@4]
+    xor     eax, eax
+    mov     hFile, eax
+
+    lea     edi, ac
+    mov     ecx, (SIZEOF ACTCTXA)/4
+    xor     eax, eax
+    rep     stosd
+    mov     ac.cbSize, SIZEOF ACTCTXA
+    mov     ac.lpSource, OFFSET ActCtxFile
+
+    lea     eax, ac
+    push    eax
+    call    [_imp__CreateActCtxA@4]
+    cmp     eax, INVALID_HANDLE_VALUE
+    je      ActCtxCloseOnly
+    mov     ActCtxH, eax
+
+    lea     edx, ActCtxCookie
+    push    edx
+    push    eax
+    call    [_imp__ActivateActCtx@8]
+    test    eax, eax
+    je      ActCtxRelease
+    jmp     ActCtxCloseOnly
+
+ActCtxRelease:
+    mov     eax, ActCtxH
+    push    eax
+    call    [_imp__ReleaseActCtx@4]
+    xor     eax, eax
+    mov     ActCtxH, eax
+
+ActCtxCloseOnly:
+    mov     eax, hFile
+    test    eax, eax
+    je      ActCtxMaybeDelete
+    push    eax
+    call    [_imp__CloseHandle@4]
+ActCtxMaybeDelete:
+    cmp     ActCtxH, 0
+    jne     ActCtxDone
+
+ActCtxDelete:
+    push    OFFSET ActCtxFile
+    call    [_imp__DeleteFileA@4]
+    mov     byte ptr [ActCtxFile], 0
+
+ActCtxDone:
+    ret
+EnableComCtlV6 endp
+
+ENDIF
+
 ;;;;;;;;;;;;;;;;;;;;;;;
 ; program entry point ;
 ;;;;;;;;;;;;;;;;;;;;;;;
@@ -1998,6 +2132,11 @@ MainEntry proc NEAR
     call    eax
 
 NoDPIAwareFunc:
+
+IF FEAT_COMCTL32V6
+    ; enable common-controls v6 from the embedded manifest buffer
+    call    EnableComCtlV6
+ENDIF
     call    InitUiMetrics
  
     ; get program HINSTANCE
@@ -2029,6 +2168,7 @@ NoDPIAwareFunc:
     mov     eax, hInstance
     mov     wc.hInstance, eax
     mov     wc.lpszClassName, OFFSET ClassName
+    mov     wc.hbrBackground, COLOR_BTNFACE
 
     ; register window class
     lea     eax, wc
