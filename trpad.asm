@@ -34,6 +34,11 @@
 ; Added VIEW Status Bar (Ln/Col) - 2476 Bytes
 ; Added DIALOG based Feature - 2686 Bytes
 ; Added KEYBOARD accelerators - 2794 Bytes
+; Added
+; - DPI Awareness v2 for both the main window and the Go To dialog
+; - UI font and layout improvements
+; - enable line number gutter by default
+;   and Find/Replace fix - 3279 Bytes (@jdp1024)
 ; Compiler directives and includes:
  
 .386                       ; Full 80386 instruction set and mode
@@ -46,7 +51,7 @@ option casemap:none        ; Preserve the case of system identifiers but not our
 ; it out entirely.  With every switch 0 the output is byte-
 ; for-byte the original baseline build (2686 bytes); a feature
 ; only costs space when it is switched on.
-FEAT_LINENUMBERS = 0       ; View > Line Numbers gutter (default OFF)
+FEAT_LINENUMBERS = 1       ; View > Line Numbers gutter (default ON)
 FEAT_DARKMODE    = 0       ; View > Dark Mode (default OFF)
 ; ==========================================================
 
@@ -132,6 +137,10 @@ LN_PAD           equ 6            ; left padding of the numbers
 IDM_VIEW_LINENUM equ 0E231h       ; View > Line Numbers command id
 ENDIF
 
+IFNDEF DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 
+DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 equ 0FFFFFFFCh
+ENDIF
+
 IF FEAT_DARKMODE
 ; ---- constants used only by the Dark Mode feature ----
 IFNDEF CFM_COLOR
@@ -151,6 +160,7 @@ ENDIF
 EXTERN _imp__CreateWindowExA@48    :PTR ; create main window / EDIT control
 EXTERN _imp__GetModuleHandleA@4    :PTR ; get HINSTANCE
 EXTERN _imp__LoadLibraryA@4        :PTR ; load modern Rich Edit DLL
+EXTERN _imp__GetProcAddress@8      :PTR ; for SetProcessDpiAwarenessContext
 EXTERN _imp__RegisterClassA@4      :PTR ; rgstr wndw class (was RegisterClassExA@4)
 EXTERN _imp__GetMessageA@16        :PTR ; message loop get
 EXTERN _imp__TranslateMessage@4    :PTR ; translate keys
@@ -173,6 +183,8 @@ EXTERN _imp__CreateMenu@0          :PTR ; create main menu bar
 EXTERN _imp__CreatePopupMenu@0     :PTR ; create each drop-down menu
 EXTERN _imp__SetMenu@8             :PTR ; attach menu bar to main window
 EXTERN _imp__DestroyWindow@4       :PTR ; close main window
+EXTERN _imp__LoadCursorA@8         :PTR ; load standard arrow cursor
+EXTERN _imp__SetCursor@4           :PTR ; set active cursor shape
 EXTERN _imp__GetOpenFileNameA@4    :PTR ; common file open dialog
 EXTERN _imp__GetSaveFileNameA@4    :PTR ; common file save dialog
 EXTERN _imp__GetLocalTime@4        :PTR ; current local time
@@ -184,9 +196,10 @@ EXTERN _imp__DestroyMenu@4         :PTR ; free a menu handle
 EXTERN _imp__GetMessagePos@0       :PTR ; screen coords of last msg
 EXTERN _imp__GetKeyState@4         :PTR ; shortcut modifier state
 EXTERN _imp__SendMessageA@16       :PTR ; talk to EDIT control
+EXTERN _imp__SendMessageW@16       :PTR ; talk to EDIT control
 EXTERN _imp__ChooseFontW@4         :PTR ; common font picker dialog
-EXTERN _imp__FindTextA@4           :PTR ; common Find dialog
-EXTERN _imp__ReplaceTextA@4        :PTR ; common Replace dialog
+EXTERN _imp__FindTextW@4           :PTR ; common Find dialog
+EXTERN _imp__ReplaceTextW@4        :PTR ; common Replace dialog
 EXTERN _imp__RegisterWindowMessageA@4 :PTR ; FINDMSGSTRING message id
 EXTERN _imp__IsDialogMessageA@8    :PTR ; route keys to find dialog
 EXTERN _imp__PrintDlgA@4           :PTR ; common Print dialog (returns DC)
@@ -206,12 +219,21 @@ EXTERN _imp__GetDlgItemInt@16      :PTR ; read Go To line number
 EXTERN _imp__EndDialog@8           :PTR ; close Go To dialog
 EXTERN _imp__SetFocus@4            :PTR ; focus edit control after commands
 EXTERN _imp__ExitProcess@4         :PTR ; terminate process cleanly
+EXTERN _imp__SetProcessDpiAwarenessContext@4 :PTR ; set process DPI awared
+EXTERN _imp__GetDC@4               :PTR ; screen DC for UI DPI
+EXTERN _imp__ReleaseDC@8           :PTR ; release screen DC
+EXTERN _imp__SystemParametersInfoA@16 :PTR ; query non-client metrics
+EXTERN _imp__GetStockObject@4      :PTR ; stock GUI font
+EXTERN _imp__CreateFontIndirectA@4 :PTR ; create status bar font from LOGFONTA
+EXTERN _imp__CreateFontA@56        :PTR ; create gutter font from RichFont face
+EXTERN _imp__SelectObject@8        :PTR ; select gutter font
 
 IF FEAT_LINENUMBERS
 EXTERN _imp__BeginPaint@8          :PTR ; begin gutter paint
 EXTERN _imp__EndPaint@8            :PTR ; end gutter paint
 EXTERN _imp__FillRect@12           :PTR ; fill gutter background
 EXTERN _imp__GetSysColorBrush@4    :PTR ; gutter background brush
+EXTERN _imp__GetTextExtentPoint32A@16 :PTR ; measure number width
 EXTERN _imp__InvalidateRect@12     :PTR ; force gutter repaint
 EXTERN _imp__SetBkMode@8           :PTR ; transparent number text
 EXTERN _imp__TextOutA@20           :PTR ; draw the line numbers
@@ -221,6 +243,9 @@ IF FEAT_DARKMODE
 EXTERN _imp__GetMenu@4             :PTR ; menu bar for the check mark
 EXTERN _imp__CheckMenuItem@12      :PTR ; check/uncheck Dark Mode
 ENDIF
+
+User32Str   db "user32.dll",0       ; for LoadLibrary
+DPIFunc     db "SetProcessDpiAwarenessContext",0 ; enable DPI awareness v2
 
 ClassName   db ".",0                ; save bytes here (seems to work)
 RichDll     db "Msftedit",0         ; Rich Edit DLL (no ext saves those bytes)
@@ -258,6 +283,7 @@ MCut        db "Cu&t",0
 MCopy       db "&Copy",0
 MPaste      db "&Paste",0
 MDelete     db "De&lete",0
+
 MFind       db "&Find...",0
 MFindNext   db "Find &Next",0
 MReplace    db "&Replace...",0
@@ -282,9 +308,9 @@ TimeBuf     db 32 dup (0)
 FileFilter  db "All Files",0,"*.*",0,0
 
 FindMsgStr  db "commdlg_FindReplace",0
-FindWhat    db 128 dup (0)         ; Find What text buffer
-ReplaceWith db 128 dup (0)         ; Replace With text buffer
-fr          FINDREPLACEA <>        ; shared find/replace request
+FindWhat    dw 128 dup (0)         ; Find What text buffer
+ReplaceWith dw 128 dup (0)         ; Replace With text buffer
+fr          FINDREPLACEW <>        ; shared find/replace request
 hFindDlg    dd 0                   ; modeless find/replace dialog HWND
 uFindMsg    dd 0                   ; registered FINDMSGSTRING message
 
@@ -294,11 +320,21 @@ LnColFmt    db "  Ln %d, Col %d",0 ; status bar Ln/Col format
 StatusBuf   db 48 dup (0)          ; formatted Ln/Col text
 hStatus     dd 0                   ; status bar window handle
 fStatus     dd 1                   ; status bar visible flag (default ON)
+UiDpiY      dd 96                  ; cached screen DPI for UI scaling
+UiWinWidth  dd WindowWidth         ; scaled startup window width
+UiWinHeight dd WindowHeight        ; scaled startup window height
+UiSbHeight  dd SBHEIGHT            ; scaled status bar height
+hUiFont     dd 0                   ; status bar UI font handle
+hLnFont     dd 0                   ; gutter font handle (from RichFont)
 
 IF FEAT_LINENUMBERS
-fLineNum    dd 0                   ; line-number gutter visible flag (default OFF)
+fLineNum    dd 1                   ; line-number gutter visible flag (default ON)
+UiLnMarginW dd LN_MARGIN_W         ; scaled gutter width
+UiLnPad     dd LN_PAD              ; scaled gutter padding
+UiLnYBias   dd 1                   ; visual baseline bias for gutter text
 LnNumFmt    db "%d",0              ; gutter number format
 MLineNum    db "Line &Numbers",0   ; View menu label
+ConsolasFace db "Consolas",0
 ENDIF
 
 IF FEAT_DARKMODE
@@ -313,13 +349,15 @@ HelpUrl     db "https://github.com/davepl",0
 ; in-memory Go To dialog template (no font block to stay compact)
 ALIGN 4
 GoToTmpl LABEL DWORD
-    dd  DS_MODALFRAME or WS_POPUP or WS_CAPTION or WS_SYSMENU
+    dd  DS_MODALFRAME or DS_SETFONT or WS_POPUP or WS_CAPTION or WS_SYSMENU
     dd  0                          ; exStyle
     dw  2                          ; control count
     dw  0,0,150,46                 ; x,y,cx,cy
     dw  0                          ; no menu
     dw  0                          ; default class
     dw  'G','o',' ','T','o',0      ; caption
+    dw  8                          ; point size for dialog units
+    dw  'S','e','g','o','e',' ','U','I',0 ; UI font for DPI scaling
     ALIGN 4
     dd  WS_CHILD or WS_VISIBLE or WS_BORDER or ES_NUMBER or WS_TABSTOP
     dd  0
@@ -337,16 +375,16 @@ GoToTmpl LABEL DWORD
     dw  'O','K',0                  ; caption
     dw  0                          ; no creation data
 
-; Rich Edit default font face: Courier only
+; Rich Edit default font face + size
 RichFont    dd 92                   ; CHARFORMATW size
-            dd CFM_FACE             ; only set face name
+            dd CFM_FACE or CFM_SIZE ; set face and size
             dd 0                    ; no effects
-            dd 0                    ; no font size change
+            dd 180                  ; ~11 px at 96 DPI (twips)
             dd 0                    ; no offset change
             dd 0                    ; no color change
             db 0                    ; default charset
             db 0                    ; default pitch/family
-            dw 'C','o','u','r','i','e','r',0
+            dw 'C','o','n','s','o','l','a','s',0
             dw 24 dup (0)
             dw 0                    ; CHARFORMATW padding
 
@@ -354,6 +392,146 @@ RichFont    dd 92                   ; CHARFORMATW size
 ;----------------------------------------------;
 .CODE ; Here is where the program itself lives ;
 ;----------------------------------------------;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; cache simple UI metrics derived from screen DPI ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+InitUiMetrics proc NEAR
+    LOCAL hdc:DWORD
+    LOCAL ncm:NONCLIENTMETRICSA
+
+        push    NULL
+        call    [_imp__GetDC@4]
+        mov     hdc, eax
+        test    eax, eax
+        je      UiMetricFont
+
+        push    LOGPIXELSY
+        push    eax
+        call    [_imp__GetDeviceCaps@8]
+        test    eax, eax
+        je      UiMetricRelease
+        mov     UiDpiY, eax
+
+        mov     ecx, 96
+        mov     edx, UiDpiY
+        mov     eax, SBHEIGHT
+        imul    eax, edx
+        add     eax, 48
+        xor     edx, edx
+        div     ecx
+        mov     UiSbHeight, eax
+
+        mov     edx, UiDpiY
+        mov     eax, WindowWidth
+        imul    eax, edx
+        add     eax, 48
+        xor     edx, edx
+        div     ecx
+        mov     UiWinWidth, eax
+
+        mov     edx, UiDpiY
+        mov     eax, WindowHeight
+        imul    eax, edx
+        add     eax, 48
+        xor     edx, edx
+        div     ecx
+        mov     UiWinHeight, eax
+
+IF FEAT_LINENUMBERS
+        mov     edx, UiDpiY
+        mov     eax, LN_MARGIN_W
+        imul    eax, edx
+        add     eax, 48
+        xor     edx, edx
+        div     ecx
+        mov     UiLnMarginW, eax
+
+        mov     edx, UiDpiY
+        mov     eax, LN_PAD
+        imul    eax, edx
+        add     eax, 48
+        xor     edx, edx
+        div     ecx
+        mov     UiLnPad, eax
+
+        mov     eax, UiDpiY
+        add     eax, 95
+        xor     edx, edx
+        div     ecx
+        mov     UiLnYBias, eax
+ENDIF
+
+    UiMetricRelease:
+        push    hdc
+        push    NULL
+        call    [_imp__ReleaseDC@8]
+
+    UiMetricFont:
+        xor     eax, eax
+        mov     hUiFont, eax
+        mov     hLnFont, eax
+
+        lea     edi, ncm
+        mov     ecx, (SIZEOF NONCLIENTMETRICSA)/4
+        rep     stosd
+        mov     ncm.cbSize, SIZEOF NONCLIENTMETRICSA
+        push    0
+        lea     eax, ncm
+        push    eax
+        push    SIZEOF NONCLIENTMETRICSA
+        push    SPI_GETNONCLIENTMETRICS
+        call    [_imp__SystemParametersInfoA@16]
+        test    eax, eax
+        je      UiMetricStatusFallback
+        lea     eax, ncm.lfStatusFont
+        push    eax
+        call    [_imp__CreateFontIndirectA@4]
+        mov     hUiFont, eax
+
+    UiMetricStatusFallback:
+        mov     eax, hUiFont
+        test    eax, eax
+        jne     UiMetricLineFont
+        push    DEFAULT_GUI_FONT
+        call    [_imp__GetStockObject@4]
+        mov     hUiFont, eax
+
+    UiMetricLineFont:
+        mov     eax, dword ptr [RichFont+12] ; CHARFORMATW.yHeight in twips
+        imul    eax, UiDpiY
+        mov     ecx, 1440
+        xor     edx, edx
+        div     ecx
+        test    eax, eax
+        jne     UiMetricHavePx
+        mov     eax, 1
+    UiMetricHavePx:
+        neg     eax
+        push    OFFSET ConsolasFace
+        push    FIXED_PITCH or FF_MODERN
+        push    CLEARTYPE_QUALITY
+        push    0
+        push    OUT_TT_PRECIS
+        push    ANSI_CHARSET
+        push    FALSE
+        push    FALSE
+        push    FALSE
+        push    FW_NORMAL
+        push    0
+        push    0
+        push    0
+        push    eax
+        call    [_imp__CreateFontA@56]
+        mov     hLnFont, eax
+        test    eax, eax
+        jne     UiMetricDone
+        mov     eax, hUiFont
+        mov     hLnFont, eax
+
+    UiMetricDone:
+        ret
+InitUiMetrics endp
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; title bar caption from startup file name ;
@@ -832,9 +1010,9 @@ ChooseFontDlg endp
 InitFR proc NEAR
     xor     eax, eax
     lea     edi, fr
-    mov     ecx, (SIZEOF FINDREPLACEA)/4
+    mov     ecx, (SIZEOF FINDREPLACEW)/4
     rep     stosd
-    mov     fr.lStructSize, SIZEOF FINDREPLACEA
+    mov     fr.lStructSize, SIZEOF FINDREPLACEW
     mov     eax, hMain
     mov     fr.hwndOwner, eax
     mov     fr.lpstrFindWhat, OFFSET FindWhat
@@ -850,7 +1028,7 @@ InitFR endp
 ; returns eax=1 found / eax=0 not found        ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 DoFindNext proc NEAR
-    LOCAL ft:FINDTEXTEXA
+    LOCAL ft:FINDTEXTEXW
     LOCAL cr:CHARRANGE
 
     ; current selection range
@@ -860,7 +1038,7 @@ DoFindNext proc NEAR
     push    EM_EXGETSEL
     mov     edx, hEdit
     push    edx
-    call    [_imp__SendMessageA@16]
+    call    [_imp__SendMessageW@16]
 
     ; search from end of selection to end of text
     mov     eax, cr.cpMax
@@ -876,10 +1054,10 @@ DoFindNext proc NEAR
     lea     edx, ft
     push    edx
     push    eax
-    push    EM_FINDTEXTEXA
+    push    EM_FINDTEXTEXW
     mov     edx, hEdit
     push    edx
-    call    [_imp__SendMessageA@16]
+    call    [_imp__SendMessageW@16]
 
     cmp     eax, -1
     je      FindMiss
@@ -891,20 +1069,25 @@ DoFindNext proc NEAR
     push    EM_EXSETSEL
     mov     edx, hEdit
     push    edx
-    call    [_imp__SendMessageA@16]
+    call    [_imp__SendMessageW@16]
 
     push    0
     push    0
     push    EM_SCROLLCARET
     mov     edx, hEdit
     push    edx
-    call    [_imp__SendMessageA@16]
+    call    [_imp__SendMessageW@16]
+
+    mov     edx, hEdit
+    push    edx
+    call    [_imp__SetFocus@4]
 
     push    1
     pop     eax
     ret
 
   FindMiss:
+
     xor     eax, eax
     ret
 DoFindNext endp
@@ -918,7 +1101,7 @@ DoReplaceOne proc NEAR
     push    EM_REPLACESEL
     mov     eax, hEdit
     push    eax
-    call    [_imp__SendMessageA@16]
+    call    [_imp__SendMessageW@16]
     call    DoFindNext
     ret
 DoReplaceOne endp
@@ -938,7 +1121,7 @@ DoReplaceAll proc NEAR
     push    EM_EXSETSEL
     mov     edx, hEdit
     push    edx
-    call    [_imp__SendMessageA@16]
+    call    [_imp__SendMessageW@16]
 
   RepLoop:
     call    DoFindNext
@@ -949,7 +1132,7 @@ DoReplaceAll proc NEAR
     push    EM_REPLACESEL
     mov     edx, hEdit
     push    edx
-    call    [_imp__SendMessageA@16]
+    call    [_imp__SendMessageW@16]
     jmp     RepLoop
 
   RepDone:
@@ -1197,10 +1380,19 @@ LnInvalidate proc NEAR hW:DWORD
     LOCAL rc:RECT
     cmp     fLineNum, 0
     je      LnInvDone
+        lea     eax, rc
+        push    eax
+        push    hW
+        call    [_imp__GetClientRect@8]
     mov     rc.left, 0
     mov     rc.top, 0
-    mov     rc.right, LN_MARGIN_W
-    mov     rc.bottom, 7FFFh
+    mov     eax, UiLnMarginW
+    mov     rc.right, eax
+        cmp     fStatus, 0
+        je      LnInvClipDone
+        mov     eax, UiSbHeight
+        sub     rc.bottom, eax
+    LnInvClipDone:
     push    FALSE
     lea     eax, rc
     push    eax
@@ -1797,6 +1989,19 @@ MainEntry proc NEAR
     LOCAL   wc:        WNDCLASS
     LOCAL   msg:       MSG
 
+    push    offset User32Str
+    call    [_imp__LoadLibraryA@4]
+    push    offset DPIFunc
+    push    eax
+    call    [_imp__GetProcAddress@8]
+    test    eax, eax
+    jz      NoDPIAwareFunc
+    push    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+    call    eax
+
+NoDPIAwareFunc:
+    call    InitUiMetrics
+ 
     ; get program HINSTANCE
     push    NULL
     call    [_imp__GetModuleHandleA@4]
@@ -1840,8 +2045,8 @@ MainEntry proc NEAR
     push    hInstance
     push    NULL
     push    NULL
-    push    WindowHeight
-    push    WindowWidth
+    push    UiWinHeight
+    push    UiWinWidth
     push    CW_USEDEFAULT
     push    CW_USEDEFAULT
     push    WS_OVERLAPPEDWINDOW or WS_VISIBLE
@@ -1987,6 +2192,8 @@ IF FEAT_LINENUMBERS
     LOCAL   ps:PAINTSTRUCT
     LOCAL   rc:RECT
     LOCAL   pt:POINT
+    LOCAL   txtsz:POINT
+    LOCAL   drawX:DWORD
     LOCAL   nbuf[16]:BYTE
 ENDIF
 IF FEAT_DARKMODE
@@ -2004,7 +2211,7 @@ ENDIF
     jne     NotWMCreate
 
     ; EDIT control (class "RICHEDIT50W")
-    mov     eax, WS_CHILD or WS_VISIBLE or WS_BORDER or ES_LEFT \
+    mov     eax, WS_CHILD or WS_VISIBLE or ES_LEFT \
                  or ES_MULTILINE or ES_AUTOVSCROLL or WS_VSCROLL
 
     ; create EDIT control
@@ -2048,14 +2255,13 @@ ENDIF
         push    eax
         call    [_imp__SendMessageA@16]
 
-        ;; we call this elsewhere anyway ;;
-	; set default Rich Edit font
-        ;push    OFFSET RichFont
-        ;push    0
-        ;push    EM_SETCHARFORMAT
-        ;mov     eax, hEdit
-        ;push    eax
-        ;call    [_imp__SendMessageA@16]
+    	; set default Rich Edit font for the initial empty document
+        push    OFFSET RichFont
+        push    SCF_ALL
+        push    EM_SETCHARFORMAT
+        mov     eax, hEdit
+        push    eax
+        call    [_imp__SendMessageA@16]
 	
         push    FALSE
         push    hWnd
@@ -2079,15 +2285,29 @@ ENDIF
         push    0
         push    0
         push    0
-        push    WS_CHILD or WS_VISIBLE
+        push    WS_CHILD or WS_VISIBLE or SS_CENTERIMAGE
         push    OFFSET StatusBuf
         push    OFFSET StaticClass
         push    WS_EX_STATICEDGE
         call    [_imp__CreateWindowExA@48]
         mov     hStatus, eax
+                mov     eax, hUiFont
+                test    eax, eax
+                je      StatusFontDone
+                push    TRUE
+                push    eax
+                push    WM_SETFONT
+                mov     eax, hStatus
+                push    eax
+                call    [_imp__SendMessageA@16]
+            StatusFontDone:
 
         ; show initial Ln/Col in the status bar
         call    UpdateStatus
+
+        mov     eax, hEdit
+        push    eax
+        call    [_imp__SetFocus@4]
 
         xor     eax, eax
         ret
@@ -2106,7 +2326,12 @@ IF FEAT_LINENUMBERS
         push    eax
         push    hWnd
         call    [_imp__GetClientRect@8]
-        mov     eax, LN_MARGIN_W
+                cmp     fStatus, 0
+                je      LnPaintSized
+                mov     eax, UiSbHeight
+                sub     rc.bottom, eax
+            LnPaintSized:
+        mov     eax, UiLnMarginW
         mov     rc.right, eax            ; strip = {0,0,MARGIN,clientH}
         push    COLOR_BTNFACE
         call    [_imp__GetSysColorBrush@4]
@@ -2118,6 +2343,13 @@ IF FEAT_LINENUMBERS
         push    TRANSPARENT
         push    ebx
         call    [_imp__SetBkMode@8]
+            mov     eax, hLnFont
+                test    eax, eax
+                je      LnFontReady
+                push    eax
+                push    ebx
+                call    [_imp__SelectObject@8]
+            LnFontReady:
         push    0
         push    0
         push    EM_GETFIRSTVISIBLELINE
@@ -2159,11 +2391,30 @@ IF FEAT_LINENUMBERS
         push    eax
         call    [_imp__wsprintfA]
         add     esp, 12
-        push    eax                      ; cch = digits written
+                mov     pt.x, eax                ; save cch for measure/draw
+                lea     eax, txtsz
+                push    eax
+                push    pt.x
+                lea     eax, nbuf
+                push    eax
+                push    ebx
+                call    [_imp__GetTextExtentPoint32A@16]
+                mov     eax, UiLnMarginW
+                sub     eax, UiLnPad
+                sub     eax, txtsz.x
+                cmp     eax, UiLnPad
+                jge     LnXReady
+                mov     eax, UiLnPad
+            LnXReady:
+                mov     drawX, eax
+                push    pt.x                     ; cch = digits written
         lea     eax, nbuf
         push    eax
-        push    pt.y
-        push    LN_PAD
+            mov     eax, pt.y
+            add     eax, UiLnYBias
+            push    eax
+        mov     eax, drawX
+        push    eax
         push    ebx
         call    [_imp__TextOutA@20]
         inc     esi
@@ -2406,7 +2657,7 @@ ENDIF
         call    InitFR
         lea     eax, fr
         push    eax
-        call    [_imp__FindTextA@4]
+        call    [_imp__FindTextW@4]
         mov     hFindDlg, eax
         xor     eax, eax
         ret
@@ -2420,7 +2671,7 @@ ENDIF
         call    InitFR
         lea     eax, fr
         push    eax
-        call    [_imp__ReplaceTextA@4]
+        call    [_imp__ReplaceTextW@4]
         mov     hFindDlg, eax
         xor     eax, eax
         ret
@@ -2591,6 +2842,10 @@ ENDIF
     NotSelChange:
         cmp     eax, 0700h                 ; EN_MSGFILTER
         jne     NotifyDone
+        cmp     dword ptr [edx+12], 020Ah  ; WM_MOUSEWHEEL
+        je      NotifyLnScroll
+        cmp     dword ptr [edx+12], 0115h  ; WM_VSCROLL
+        je      NotifyLnScroll
         cmp     dword ptr [edx+12], 0205h  ; WM_RBUTTONUP
         jne     NotifyDone
         push    hWnd
@@ -2598,10 +2853,36 @@ ENDIF
         push    1
         pop     eax
         ret
+    NotifyLnScroll:
+        push    hWnd
+        call    LnInvalidate
+        jmp     NotifyDone
     NotifyDone:
         xor     eax, eax
         ret
     NotWMNotify:
+        cmp     uMsg, WM_SETCURSOR
+        jne     NotWMSetCursor
+IF FEAT_LINENUMBERS
+        cmp     fLineNum, 0
+        je      NotWMSetCursor
+        mov     eax, wParam
+        cmp     eax, hWnd
+        jne     NotWMSetCursor
+    mov     eax, lParam
+    and     eax, 0FFFFh
+    cmp     eax, HTCLIENT
+    jne     NotWMSetCursor
+        push    IDC_ARROW
+        push    0
+        call    [_imp__LoadCursorA@8]
+        push    eax
+        call    [_imp__SetCursor@4]
+        push    1
+        pop     eax
+        ret
+ENDIF
+    NotWMSetCursor:
         cmp     uMsg, WM_SIZE
         jne     NotWMSize
 
@@ -2614,9 +2895,10 @@ ENDIF
         ; if status bar shown, reserve space and place it
         cmp     fStatus, 0
         je      SizeEdit
-        sub     edi, SBHEIGHT
+            sub     edi, UiSbHeight
         push    SWP_NOZORDER
-        push    SBHEIGHT
+            mov     eax, UiSbHeight
+            push    eax
         push    esi
         push    edi
         push    0
@@ -2631,8 +2913,8 @@ IF FEAT_LINENUMBERS
         xor     ebx, ebx
         cmp     fLineNum, 0
         je      LnNoShift
-        mov     ebx, LN_MARGIN_W
-        sub     esi, LN_MARGIN_W
+                mov     ebx, UiLnMarginW
+                sub     esi, ebx
       LnNoShift:
         push    SWP_NOZORDER
         push    edi
