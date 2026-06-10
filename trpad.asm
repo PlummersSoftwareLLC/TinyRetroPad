@@ -38,7 +38,7 @@
 ; - DPI Awareness v2 for both the main window and the Go To dialog
 ; - UI font and layout improvements
 ; - enable line number gutter by default
-;   and Find/Replace fix - 3279 Bytes (@jdp1024)
+;   and Find/Replace fix - 3255 Bytes (@jdp1024)
 ; Compiler directives and includes:
  
 .386                       ; Full 80386 instruction set and mode
@@ -138,7 +138,7 @@ IDM_VIEW_LINENUM equ 0E231h       ; View > Line Numbers command id
 ENDIF
 
 IFNDEF DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 
-DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 equ 0FFFFFFFCh
+DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 equ -4
 ENDIF
 
 IF FEAT_DARKMODE
@@ -223,7 +223,6 @@ EXTERN _imp__SetProcessDpiAwarenessContext@4 :PTR ; set process DPI awared
 EXTERN _imp__GetDC@4               :PTR ; screen DC for UI DPI
 EXTERN _imp__ReleaseDC@8           :PTR ; release screen DC
 EXTERN _imp__SystemParametersInfoA@16 :PTR ; query non-client metrics
-EXTERN _imp__GetStockObject@4      :PTR ; stock GUI font
 EXTERN _imp__CreateFontIndirectA@4 :PTR ; create status bar font from LOGFONTA
 EXTERN _imp__CreateFontA@56        :PTR ; create gutter font from RichFont face
 EXTERN _imp__SelectObject@8        :PTR ; select gutter font
@@ -331,7 +330,6 @@ IF FEAT_LINENUMBERS
 fLineNum    dd 1                   ; line-number gutter visible flag (default ON)
 UiLnMarginW dd LN_MARGIN_W         ; scaled gutter width
 UiLnPad     dd LN_PAD              ; scaled gutter padding
-UiLnYBias   dd 1                   ; visual baseline bias for gutter text
 LnNumFmt    db "%d",0              ; gutter number format
 MLineNum    db "Line &Numbers",0   ; View menu label
 ConsolasFace db "Consolas",0
@@ -454,12 +452,6 @@ IF FEAT_LINENUMBERS
         xor     edx, edx
         div     ecx
         mov     UiLnPad, eax
-
-        mov     eax, UiDpiY
-        add     eax, 95
-        xor     edx, edx
-        div     ecx
-        mov     UiLnYBias, eax
 ENDIF
 
     UiMetricRelease:
@@ -482,19 +474,9 @@ ENDIF
         push    SIZEOF NONCLIENTMETRICSA
         push    SPI_GETNONCLIENTMETRICS
         call    [_imp__SystemParametersInfoA@16]
-        test    eax, eax
-        je      UiMetricStatusFallback
         lea     eax, ncm.lfStatusFont
         push    eax
         call    [_imp__CreateFontIndirectA@4]
-        mov     hUiFont, eax
-
-    UiMetricStatusFallback:
-        mov     eax, hUiFont
-        test    eax, eax
-        jne     UiMetricLineFont
-        push    DEFAULT_GUI_FONT
-        call    [_imp__GetStockObject@4]
         mov     hUiFont, eax
 
     UiMetricLineFont:
@@ -1380,19 +1362,19 @@ LnInvalidate proc NEAR hW:DWORD
     LOCAL rc:RECT
     cmp     fLineNum, 0
     je      LnInvDone
-        lea     eax, rc
-        push    eax
-        push    hW
-        call    [_imp__GetClientRect@8]
+    lea     eax, rc
+    push    eax
+    push    hW
+    call    [_imp__GetClientRect@8]
     mov     rc.left, 0
     mov     rc.top, 0
     mov     eax, UiLnMarginW
     mov     rc.right, eax
-        cmp     fStatus, 0
-        je      LnInvClipDone
-        mov     eax, UiSbHeight
-        sub     rc.bottom, eax
-    LnInvClipDone:
+    cmp     fStatus, 0
+    je      LnInvClipDone
+    mov     eax, UiSbHeight
+    sub     rc.bottom, eax
+LnInvClipDone:
     push    FALSE
     lea     eax, rc
     push    eax
@@ -2212,7 +2194,7 @@ ENDIF
 
     ; EDIT control (class "RICHEDIT50W")
     mov     eax, WS_CHILD or WS_VISIBLE or ES_LEFT \
-                 or ES_MULTILINE or ES_AUTOVSCROLL or WS_VSCROLL
+                 or ES_MULTILINE or ES_AUTOVSCROLL or WS_VSCROLL or ES_NOHIDESEL
 
     ; create EDIT control
     EditStyleReady:
@@ -2291,16 +2273,16 @@ ENDIF
         push    WS_EX_STATICEDGE
         call    [_imp__CreateWindowExA@48]
         mov     hStatus, eax
-                mov     eax, hUiFont
-                test    eax, eax
-                je      StatusFontDone
-                push    TRUE
-                push    eax
-                push    WM_SETFONT
-                mov     eax, hStatus
-                push    eax
-                call    [_imp__SendMessageA@16]
-            StatusFontDone:
+        mov     eax, hUiFont
+        test    eax, eax
+        je      StatusFontDone
+        push    TRUE
+        push    eax
+        push    WM_SETFONT
+        mov     eax, hStatus
+        push    eax
+        call    [_imp__SendMessageA@16]
+    StatusFontDone:
 
         ; show initial Ln/Col in the status bar
         call    UpdateStatus
@@ -2326,11 +2308,11 @@ IF FEAT_LINENUMBERS
         push    eax
         push    hWnd
         call    [_imp__GetClientRect@8]
-                cmp     fStatus, 0
-                je      LnPaintSized
-                mov     eax, UiSbHeight
-                sub     rc.bottom, eax
-            LnPaintSized:
+        cmp     fStatus, 0
+        je      LnPaintSized
+        mov     eax, UiSbHeight
+        sub     rc.bottom, eax
+    LnPaintSized:
         mov     eax, UiLnMarginW
         mov     rc.right, eax            ; strip = {0,0,MARGIN,clientH}
         push    COLOR_BTNFACE
@@ -2343,13 +2325,13 @@ IF FEAT_LINENUMBERS
         push    TRANSPARENT
         push    ebx
         call    [_imp__SetBkMode@8]
-            mov     eax, hLnFont
-                test    eax, eax
-                je      LnFontReady
-                push    eax
-                push    ebx
-                call    [_imp__SelectObject@8]
-            LnFontReady:
+        mov     eax, hLnFont
+        test    eax, eax
+        je      LnFontReady
+        push    eax
+        push    ebx
+        call    [_imp__SelectObject@8]
+        LnFontReady:
         push    0
         push    0
         push    EM_GETFIRSTVISIBLELINE
@@ -2391,28 +2373,27 @@ IF FEAT_LINENUMBERS
         push    eax
         call    [_imp__wsprintfA]
         add     esp, 12
-                mov     pt.x, eax                ; save cch for measure/draw
-                lea     eax, txtsz
-                push    eax
-                push    pt.x
-                lea     eax, nbuf
-                push    eax
-                push    ebx
-                call    [_imp__GetTextExtentPoint32A@16]
-                mov     eax, UiLnMarginW
-                sub     eax, UiLnPad
-                sub     eax, txtsz.x
-                cmp     eax, UiLnPad
-                jge     LnXReady
-                mov     eax, UiLnPad
-            LnXReady:
-                mov     drawX, eax
-                push    pt.x                     ; cch = digits written
+        mov     pt.x, eax                ; save cch for measure/draw
+        lea     eax, txtsz
+        push    eax
+        push    pt.x
         lea     eax, nbuf
         push    eax
-            mov     eax, pt.y
-            add     eax, UiLnYBias
-            push    eax
+        push    ebx
+        call    [_imp__GetTextExtentPoint32A@16]
+        mov     eax, UiLnMarginW
+        sub     eax, UiLnPad
+        sub     eax, txtsz.x
+        cmp     eax, UiLnPad
+        jge     LnXReady
+        mov     eax, UiLnPad
+    LnXReady:
+        mov     drawX, eax
+        push    pt.x                     ; cch = digits written
+        lea     eax, nbuf
+        push    eax
+        mov     eax, pt.y
+        push    eax
         mov     eax, drawX
         push    eax
         push    ebx
@@ -2869,10 +2850,10 @@ IF FEAT_LINENUMBERS
         mov     eax, wParam
         cmp     eax, hWnd
         jne     NotWMSetCursor
-    mov     eax, lParam
-    and     eax, 0FFFFh
-    cmp     eax, HTCLIENT
-    jne     NotWMSetCursor
+        mov     eax, lParam
+        and     eax, 0FFFFh
+        cmp     eax, HTCLIENT
+        jne     NotWMSetCursor
         push    IDC_ARROW
         push    0
         call    [_imp__LoadCursorA@8]
@@ -2895,10 +2876,10 @@ ENDIF
         ; if status bar shown, reserve space and place it
         cmp     fStatus, 0
         je      SizeEdit
-            sub     edi, UiSbHeight
+        sub     edi, UiSbHeight
         push    SWP_NOZORDER
-            mov     eax, UiSbHeight
-            push    eax
+        mov     eax, UiSbHeight
+        push    eax
         push    esi
         push    edi
         push    0
@@ -2913,8 +2894,8 @@ IF FEAT_LINENUMBERS
         xor     ebx, ebx
         cmp     fLineNum, 0
         je      LnNoShift
-                mov     ebx, UiLnMarginW
-                sub     esi, ebx
+        mov     ebx, UiLnMarginW
+        sub     esi, ebx
       LnNoShift:
         push    SWP_NOZORDER
         push    edi
