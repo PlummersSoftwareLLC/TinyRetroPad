@@ -39,6 +39,8 @@
 ; - UI font and layout improvements
 ; - enable line number gutter by default
 ;   and Find/Replace fix - 3255 Bytes (@jdp1024)
+; Added
+; - keep window placement - 3332 Bytes (@jdp1024)
 ; Compiler directives and includes:
  
 .386                       ; Full 80386 instruction set and mode
@@ -136,9 +138,14 @@ LN_MARGIN_W      equ 44           ; gutter width in pixels
 LN_PAD           equ 6            ; left padding of the numbers
 IDM_VIEW_LINENUM equ 0E231h       ; View > Line Numbers command id
 ENDIF
-
 IFNDEF DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 
 DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 equ -4
+ENDIF
+IFNDEF SHREGSET_FORCE_HKCU
+SHREGSET_FORCE_HKCU equ 2
+ENDIF
+IFNDEF SRRF_RT_REG_BINARY
+SRRF_RT_REG_BINARY equ 8
 ENDIF
 
 IF FEAT_DARKMODE
@@ -226,6 +233,10 @@ EXTERN _imp__SystemParametersInfoA@16 :PTR ; query non-client metrics
 EXTERN _imp__CreateFontIndirectA@4 :PTR ; create status bar font from LOGFONTA
 EXTERN _imp__CreateFontA@56        :PTR ; create gutter font from RichFont face
 EXTERN _imp__SelectObject@8        :PTR ; select gutter font
+EXTERN _imp__GetWindowPlacement@8  :PTR ; remember window placement
+EXTERN _imp__SetWindowPlacement@8  :PTR ; store window placement
+EXTERN _imp__SHRegSetUSValueA@24   :PTR ; window placement storage
+EXTERN _imp__SHRegGetValueA@28     :PTR
 
 IF FEAT_LINENUMBERS
 EXTERN _imp__BeginPaint@8          :PTR ; begin gutter paint
@@ -243,8 +254,10 @@ EXTERN _imp__GetMenu@4             :PTR ; menu bar for the check mark
 EXTERN _imp__CheckMenuItem@12      :PTR ; check/uncheck Dark Mode
 ENDIF
 
-User32Str   db "user32.dll",0       ; for LoadLibrary
-DPIFunc     db "SetProcessDpiAwarenessContext",0 ; enable DPI awareness v2
+User32Str           db "user32.dll",0       ; for LoadLibrary
+DPIFunc             db "SetProcessDpiAwarenessContext",0 ; enable DPI awareness v2
+RegPathWinPlace     db "SOFTWARE\TinyRetroPad",0
+RegKeyWinPlace      db "WP",0
 
 ClassName   db ".",0                ; save bytes here (seems to work)
 RichDll     db "Msftedit",0         ; Rich Edit DLL (no ext saves those bytes)
@@ -1970,6 +1983,9 @@ MainEntry proc NEAR
     LOCAL   hInstance: HINSTANCE
     LOCAL   wc:        WNDCLASS
     LOCAL   msg:       MSG
+    LOCAL   dwSize:    DWORD
+    LOCAL   dwType:    DWORD
+    LOCAL   WinPlace:  WINDOWPLACEMENT
 
     push    offset User32Str
     call    [_imp__LoadLibraryA@4]
@@ -2042,6 +2058,27 @@ NoDPIAwareFunc:
     je      MainRet
     
     mov     hMain, eax
+
+    ; restore prior window placement (if present)
+    mov     dwSize, sizeof WINDOWPLACEMENT
+    lea     eax, dwSize
+    push    eax
+    lea     eax, WinPlace
+    push    eax
+    push    0
+    push    SRRF_RT_REG_BINARY
+    push    offset RegKeyWinPlace
+    push    offset RegPathWinPlace
+    push    HKEY_CURRENT_USER
+    call    [_imp__SHRegGetValueA@28]
+    test    eax, eax
+    jne     NoRestore
+    lea     eax, WinPlace
+    push    eax
+    push    hMain
+    call    [_imp__SetWindowPlacement@8]
+
+    NoRestore:
 
     ; load file and set title
     call    LoadStartupFile
@@ -2170,6 +2207,7 @@ MainEntry endp
 
 
 WndProc proc hWnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
+    LOCAL   WinPlace:WINDOWPLACEMENT
 IF FEAT_LINENUMBERS
     LOCAL   ps:PAINTSTRUCT
     LOCAL   rc:RECT
@@ -2929,6 +2967,20 @@ ENDIF
     NotWMSize:
         cmp     uMsg, WM_DESTROY
         jne     NotWMDestroy
+
+        mov     WinPlace.iLength, sizeof WINDOWPLACEMENT
+        lea     eax, WinPlace
+        push    eax
+        push    hMain
+        call    [_imp__GetWindowPlacement@8]
+        push    SHREGSET_FORCE_HKCU
+        push    sizeof WinPlace
+        lea     eax, WinPlace
+        push    eax
+        push    REG_BINARY
+        push    offset RegKeyWinPlace
+        push    offset RegPathWinPlace
+        call    [_imp__SHRegSetUSValueA@24]
 
         ; post quit message and exit
         push    0
