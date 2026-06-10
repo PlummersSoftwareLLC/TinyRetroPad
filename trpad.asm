@@ -42,6 +42,9 @@
 ; Added
 ; - keep window placement - 3332 Bytes (@jdp1024)
 ; Added comctl32 6 activation - 3423 Bytes (@jdp1024)
+; Added consts and global variables relayout - 3422 Bytes (@jdp1024)
+
+; With MS link.exe, the exe size is 10752 bytes (@jdp1024)
 
 ; Compiler directives and includes:
  
@@ -261,11 +264,13 @@ EXTERN _imp__GetMenu@4             :PTR ; menu bar for the check mark
 EXTERN _imp__CheckMenuItem@12      :PTR ; check/uncheck Dark Mode
 ENDIF
 
+.CONST
 User32Str           db "user32",0                           ; for LoadLibrary
 DPIFunc             db "SetProcessDpiAwarenessContext",0    ; enable DPI awareness v2
 RegPathWinPlace     db "SOFTWARE\TinyRetroPad",0            ; registry path
 RegKeyWinPlace      db "WP",0                               ; registry key
 
+.CONST
 ClassName   db ".",0                ; save bytes here (seems to work)
 RichDll     db "Msftedit",0         ; Rich Edit DLL (no ext saves those bytes)
 EditClass   db "RICHEDIT50W",0      ; modern Rich Edit control from WinAPI
@@ -274,20 +279,24 @@ EmptyText   db 0
 
 IF FEAT_COMCTL32V6
 ACTCTX_FLAG_RESOURCE_NAME_VALID equ 8
+.CONST
 ActCtxSuffix db "\explorer.exe",0
-ActCtxSource db MAX_PATH dup (0)    ; filled at runtime: %WinDir%\explorer.exe
-ActCtxH         dd 0                ; active context handle
-ActCtxCookie    dd 0                ; activation cookie for current thread
+.DATA?
+ActCtxSource db MAX_PATH dup (?)    ; filled at runtime: %WinDir%\explorer.exe
+ActCtxH         dd ?                ; active context handle
+ActCtxCookie    dd ?                ; activation cookie for current thread
 ENDIF
 
-hMain       dd 0                    ; main window handle
-hEdit       dd 0                    ; EDIT control handle
-CmdFile     db MAX_CMD_PATH dup (0) ; startup file path buffer
-TitleBuf    db MAX_TITLE dup    (0) ; window title buffer
-BytesRead   dd 0                    ; bytes read from file
-fDirty      dd 0                    ; EDIT modified flag
-fWrap       dd 1                    ; word wrap state
+.DATA?
+hMain       dd ?                    ; main window handle
+hEdit       dd ?                    ; EDIT control handle
+CmdFile     db MAX_CMD_PATH dup (?) ; startup file path buffer
+TitleBuf    db MAX_TITLE dup    (?) ; window title buffer
+BytesRead   dd ?                    ; bytes read from file
+fDirty      dd ?                    ; EDIT modified flag
+fWrap       dd ?                    ; word wrap state
 
+.CONST
 UntitledText db "Untitled",0
 NotepadTail  db " - TinyRetroPad",0
 
@@ -330,48 +339,67 @@ AboutText   db "TinyRetroPad - tiny notepad-style editor",0
 SaveCap     db "TinyRetroPad",0
 SaveAskText db "Save changes?",0
 SpaceText   db " ",0
-DateBuf     db 32 dup (0)
-TimeBuf     db 32 dup (0)
+
+.DATA?
+DateBuf     db 32 dup (?)
+TimeBuf     db 32 dup (?)
+
+.CONST
 FileFilter  db "All Files",0,"*.*",0,0
 
+.CONST
 FindMsgStr  db "commdlg_FindReplace",0
-FindWhat    dw 128 dup (0)         ; Find What text buffer
-ReplaceWith dw 128 dup (0)         ; Replace With text buffer
-fr          FINDREPLACEW <>        ; shared find/replace request
-hFindDlg    dd 0                   ; modeless find/replace dialog HWND
-uFindMsg    dd 0                   ; registered FINDMSGSTRING message
 
+.DATA?
+FindWhat    dw 128 dup (?)         ; Find What text buffer
+ReplaceWith dw 128 dup (?)         ; Replace With text buffer
+fr          FINDREPLACEW <>        ; shared find/replace request
+hFindDlg    dd ?                   ; modeless find/replace dialog HWND
+uFindMsg    dd ?                   ; registered FINDMSGSTRING message
+
+.CONST
 StaticClass db "STATIC",0          ; built-in class for status bar pane
 DocName     db "TinyRetroPad",0    ; print job document name
 LnColFmt    db "  Ln %d, Col %d",0 ; status bar Ln/Col format
-StatusBuf   db 48 dup (0)          ; formatted Ln/Col text
-hStatus     dd 0                   ; status bar window handle
-fStatus     dd 1                   ; status bar visible flag (default ON)
-UiDpiY      dd 96                  ; cached screen DPI for UI scaling
-UiWinWidth  dd WindowWidth         ; scaled startup window width
-UiWinHeight dd WindowHeight        ; scaled startup window height
-UiSbHeight  dd SBHEIGHT            ; scaled status bar height
-hUiFont     dd 0                   ; status bar UI font handle
-hLnFont     dd 0                   ; gutter font handle (from RichFont)
+
+.DATA?
+StatusBuf   db 48 dup (?)          ; formatted Ln/Col text
+hStatus     dd ?                   ; status bar window handle
+
+.DATA?
+fStatus     dd ?                   ; status bar visible flag (default ON)
+UiDpiY      dd ?                   ; cached screen DPI for UI scaling
+UiWinWidth  dd ?                   ; scaled startup window width
+UiWinHeight dd ?                   ; scaled startup window height
+UiSbHeight  dd ?                   ; scaled status bar height
+hUiFont     dd ?                   ; status bar UI font handle
+hLnFont     dd ?                   ; gutter font handle (from RichFont)
 
 IF FEAT_LINENUMBERS
-fLineNum    dd 1                   ; line-number gutter visible flag (default ON)
-UiLnMarginW dd LN_MARGIN_W         ; scaled gutter width
-UiLnPad     dd LN_PAD              ; scaled gutter padding
+.DATA?
+fLineNum    dd ?                   ; line-number gutter visible flag (default ON)
+UiLnMarginW dd ?                   ; scaled gutter width
+UiLnPad     dd ?                   ; scaled gutter padding
+.CONST
 LnNumFmt    db "%d",0              ; gutter number format
 MLineNum    db "Line &Numbers",0   ; View menu label
 ConsolasFace db "Consolas",0
 ENDIF
 
 IF FEAT_DARKMODE
+.DATA?
 fDark       dd 0                   ; dark mode flag (default OFF)
+.CONST
 MDarkMode   db "Dark &Mode",0      ; View menu label
 ENDIF
 
-hInst       dd 0                   ; module handle (for dialogs)
+.DATA?
+hInst       dd ?                   ; module handle (for dialogs)
+.CONST
 OpenVerb    db "open",0            ; ShellExecute verb
 HelpUrl     db "https://github.com/davepl",0
 
+.CONST
 ; in-memory Go To dialog template (no font block to stay compact)
 ALIGN 4
 GoToTmpl LABEL DWORD
@@ -2064,6 +2092,18 @@ MainEntry proc NEAR
     LOCAL   dwType:    DWORD
     LOCAL   WinPlace:  WINDOWPLACEMENT
 
+    ; initialize global variables
+    mov     fWrap, 1
+    mov     fStatus, 1
+    mov     UiDpiY, 96
+    mov     UiWinWidth, WindowWidth
+    mov     UiWinHeight, WindowHeight
+    mov     UiSbHeight, SBHEIGHT
+    mov     fLineNum, 1
+    mov     UiLnMarginW, LN_MARGIN_W
+    mov     UiLnPad, LN_PAD
+
+    ; enable DPI awareness v2
     push    offset User32Str
     call    [_imp__LoadLibraryA@4]
     push    offset DPIFunc
@@ -2077,7 +2117,7 @@ MainEntry proc NEAR
 NoDPIAwareFunc:
 
 IF FEAT_COMCTL32V6
-    ; enable common-controls v6 from the embedded manifest buffer
+    ; enable common-controls v6 from explorer.exe
     call    EnableComCtlV6
 ENDIF
     call    InitUiMetrics
