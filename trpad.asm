@@ -49,6 +49,7 @@
 ;   of changed line numbers. The line number bar still flickers when
 ;   scrolling the richedit very fast, the full solution is beyond
 ;   the need of this program. - 3568 Bytes (@jdp1024)
+; The exe without line number bar is 3076 Bytes.
 
 ; With MS link.exe, the exe size is 11346 bytes (@jdp1024)
 
@@ -544,6 +545,7 @@ ENDIF
         call    [_imp__CreateFontIndirectA@4]
         mov     hUiFont, eax
 
+IF FEAT_LINENUMBERS
     UiMetricLineFont:
         mov     eax, dword ptr [RichFont+12] ; CHARFORMATW.yHeight in twips
         imul    eax, UiDpiY
@@ -575,7 +577,7 @@ ENDIF
         jne     UiMetricDone
         mov     eax, hUiFont
         mov     hLnFont, eax
-
+ENDIF
     UiMetricDone:
         ret
 InitUiMetrics endp
@@ -2202,10 +2204,13 @@ MainEntry proc NEAR
     mov     UiWinWidth, WindowWidth
     mov     UiWinHeight, WindowHeight
     mov     UiSbHeight, SBHEIGHT
+
+IF FEAT_LINENUMBERS
     mov     fLineNum, 1
     mov     UiLnMarginW, LN_MARGIN_W
     mov     UiLnPad, LN_PAD
     mov     LnHiLine, -1
+ENDIF
 
     ; enable DPI awareness v2
     push    offset User32Str
@@ -3159,9 +3164,11 @@ ENDIF
         pop     eax
         ret
     NotifyLnScroll:
+IF FEAT_LINENUMBERS
         push    hWnd
         call    LnInvalidate
         jmp     NotifyDone
+ENDIF
     NotifyDone:
         xor     eax, eax
         ret
