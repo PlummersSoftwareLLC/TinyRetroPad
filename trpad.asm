@@ -35,6 +35,7 @@
 ; Added DIALOG based Feature - 2686 Bytes
 ; Added KEYBOARD accelerators - 2794 Bytes
 ; Added
+; - Line Numbers default ON
 ; - DPI Awareness v2 for both the main window and the Go To dialog
 ; - UI font and layout improvements
 ; - enable line number gutter by default
@@ -43,8 +44,13 @@
 ; - keep window placement - 3332 Bytes (@jdp1024)
 ; Added comctl32 6 activation - 3423 Bytes (@jdp1024)
 ; Added consts and global variables relayout - 3422 Bytes (@jdp1024)
+; Added highlight of the current line number and fixed flickers of the
+;   line number bar when the caret moves by only repainting the area
+;   of changed line numbers. The line number bar still flickers when
+;   scrolling the richedit very fast, the full solution is beyond
+;   the need of this program. - 3568 Bytes (@jdp1024)
 
-; With MS link.exe, the exe size is 10752 bytes (@jdp1024)
+; With MS link.exe, the exe size is 11346 bytes (@jdp1024)
 
 ; Compiler directives and includes:
  
@@ -229,6 +235,7 @@ EXTERN _imp__GetDeviceCaps@8       :PTR ; printer resolution/size
 EXTERN _imp__DeleteDC@4            :PTR ; release printer DC
 EXTERN _imp__ShowWindow@8          :PTR ; show/hide status bar
 EXTERN _imp__GetClientRect@8       :PTR ; client size for relayout
+EXTERN _imp__GetSysColor@4         :PTR ; resolve system COLOR_* to COLORREF
 EXTERN _imp__wsprintfA            :PTR ; format Ln/Col string
 EXTERN _imp__ShellExecuteA@24      :PTR ; open help URL in browser
 EXTERN _imp__PageSetupDlgA@4       :PTR ; common Page Setup dialog
@@ -256,6 +263,7 @@ EXTERN _imp__GetSysColorBrush@4    :PTR ; gutter background brush
 EXTERN _imp__GetTextExtentPoint32A@16 :PTR ; measure number width
 EXTERN _imp__InvalidateRect@12     :PTR ; force gutter repaint
 EXTERN _imp__SetBkMode@8           :PTR ; transparent number text
+EXTERN _imp__SetTextColor@8        :PTR ; switch line-number text color
 EXTERN _imp__TextOutA@20           :PTR ; draw the line numbers
 ENDIF
 
@@ -380,6 +388,7 @@ IF FEAT_LINENUMBERS
 fLineNum    dd ?                   ; line-number gutter visible flag (default ON)
 UiLnMarginW dd ?                   ; scaled gutter width
 UiLnPad     dd ?                   ; scaled gutter padding
+LnHiLine    dd ?                   ; last highlighted caret line
 .CONST
 LnNumFmt    db "%d",0              ; gutter number format
 MLineNum    db "Line &Numbers",0   ; View menu label
@@ -1439,6 +1448,100 @@ LnInvClipDone:
   LnInvDone:
     ret
 LnInvalidate endp
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; invalidate one line-number row in gutter    ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+LnInvalidateLine proc NEAR hW:DWORD, lineIdx:DWORD
+    LOCAL rc:RECT
+    LOCAL pt:POINT
+    cmp     fLineNum, 0
+    je      LnInvLineDone
+    cmp     lineIdx, -1
+    je      LnInvLineDone
+
+    lea     eax, rc
+    push    eax
+    push    hW
+    call    [_imp__GetClientRect@8]
+    mov     rc.left, 0
+    mov     eax, UiLnMarginW
+    mov     rc.right, eax
+    cmp     fStatus, 0
+    je      LnInvLineClipOk
+    mov     eax, UiSbHeight
+    sub     rc.bottom, eax
+LnInvLineClipOk:
+
+    push    0
+    push    lineIdx
+    push    EM_LINEINDEX
+    mov     eax, hEdit
+    push    eax
+    call    [_imp__SendMessageA@16]
+    cmp     eax, -1
+    je      LnInvLineDone
+
+    push    eax
+    lea     eax, pt
+    push    eax
+    push    EM_POSFROMCHAR
+    mov     eax, hEdit
+    push    eax
+    call    [_imp__SendMessageA@16]
+
+    mov     eax, pt.y
+    dec     eax
+    mov     rc.top, eax
+
+    mov     eax, lineIdx
+    inc     eax
+    push    0
+    push    eax
+    push    EM_LINEINDEX
+    mov     eax, hEdit
+    push    eax
+    call    [_imp__SendMessageA@16]
+    cmp     eax, -1
+    je      LnInvLineLast
+    push    eax
+    lea     eax, pt
+    push    eax
+    push    EM_POSFROMCHAR
+    mov     eax, hEdit
+    push    eax
+    call    [_imp__SendMessageA@16]
+    mov     eax, pt.y
+    inc     eax
+    mov     rc.bottom, eax
+    jmp     LnInvLineClamp
+
+LnInvLineLast:
+    mov     eax, rc.top
+    add     eax, UiSbHeight
+    mov     rc.bottom, eax
+
+LnInvLineClamp:
+    cmp     rc.top, 0
+    jge     LnInvLineTopOk
+    mov     rc.top, 0
+LnInvLineTopOk:
+    mov     eax, rc.bottom
+    cmp     eax, rc.top
+    jg      LnInvLineBottomOk
+    mov     eax, rc.top
+    inc     eax
+    mov     rc.bottom, eax
+LnInvLineBottomOk:
+    push    FALSE
+    lea     eax, rc
+    push    eax
+    push    hW
+    call    [_imp__InvalidateRect@12]
+
+LnInvLineDone:
+    ret
+LnInvalidateLine endp
 ENDIF
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2102,6 +2205,7 @@ MainEntry proc NEAR
     mov     fLineNum, 1
     mov     UiLnMarginW, LN_MARGIN_W
     mov     UiLnPad, LN_PAD
+    mov     LnHiLine, -1
 
     ; enable DPI awareness v2
     push    offset User32Str
@@ -2151,7 +2255,8 @@ ENDIF
     mov     eax, hInstance
     mov     wc.hInstance, eax
     mov     wc.lpszClassName, OFFSET ClassName
-    mov     wc.hbrBackground, COLOR_BTNFACE
+    mov     wc.hbrBackground, COLOR_BTNFACE+1
+    mov     wc.style, CS_HREDRAW or CS_VREDRAW or CS_BYTEALIGNWINDOW
 
     ; register window class
     lea     eax, wc
@@ -2334,9 +2439,11 @@ WndProc proc hWnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
 IF FEAT_LINENUMBERS
     LOCAL   ps:PAINTSTRUCT
     LOCAL   rc:RECT
+    LOCAL   frc:RECT
     LOCAL   pt:POINT
     LOCAL   txtsz:POINT
     LOCAL   drawX:DWORD
+    LOCAL   curLine:DWORD
     LOCAL   nbuf[16]:BYTE
 ENDIF
 IF FEAT_DARKMODE
@@ -2507,6 +2614,13 @@ IF FEAT_LINENUMBERS
         push    eax
         call    [_imp__SendMessageA@16]
         mov     edi, eax                 ; edi = total line count
+        push    0
+        push    -1
+        push    EM_LINEFROMCHAR
+        mov     eax, hEdit
+        push    eax
+        call    [_imp__SendMessageA@16]
+        mov     curLine, eax             ; caret/current line index
       LnLoop:
         cmp     esi, edi
         jge     LnPaintEnd
@@ -2550,6 +2664,34 @@ IF FEAT_LINENUMBERS
         mov     eax, UiLnPad
     LnXReady:
         mov     drawX, eax
+        mov     eax, esi
+        cmp     eax, curLine
+        jne     LnNormColor
+        mov     frc.left, 0
+        mov     eax, pt.y
+        dec     eax
+        mov     frc.top, eax
+        mov     eax, UiLnMarginW
+        mov     frc.right, eax
+        mov     eax, pt.y
+        add     eax, txtsz.y
+        inc     eax
+        mov     frc.bottom, eax
+        push    COLOR_INFOBK
+        call    [_imp__GetSysColorBrush@4]
+        push    eax
+        lea     eax, frc
+        push    eax
+        push    ebx
+        call    [_imp__FillRect@12]
+        jmp     LnColorDone
+    LnNormColor:
+        push    COLOR_WINDOWTEXT
+        call    [_imp__GetSysColor@4]
+        push    eax
+        push    ebx
+        call    [_imp__SetTextColor@8]
+    LnColorDone:
         push    pt.x                     ; cch = digits written
         lea     eax, nbuf
         push    eax
@@ -2980,6 +3122,27 @@ ENDIF
         cmp     eax, EN_SELCHANGE          ; caret/selection moved
         jne     NotSelChange
         call    UpdateStatus
+    IF FEAT_LINENUMBERS
+        push    0
+        push    -1
+        push    EM_LINEFROMCHAR
+        mov     eax, hEdit
+        push    eax
+        call    [_imp__SendMessageA@16]
+        mov     curLine, eax
+        cmp     eax, LnHiLine
+        je      NotifyDone
+        mov     eax, LnHiLine
+        push    eax
+        push    hWnd
+        call    LnInvalidateLine
+        mov     eax, curLine
+        push    eax
+        push    hWnd
+        call    LnInvalidateLine
+        mov     eax, curLine
+        mov     LnHiLine, eax
+    ENDIF
         jmp     NotifyDone
     NotSelChange:
         cmp     eax, 0700h                 ; EN_MSGFILTER
