@@ -204,6 +204,8 @@ EXTERN _imp__PageSetupDlgA@4       :PTR ; common Page Setup dialog
 EXTERN _imp__DialogBoxIndirectParamA@20 :PTR ; in-memory Go To dialog
 EXTERN _imp__GetDlgItemInt@16      :PTR ; read Go To line number
 EXTERN _imp__EndDialog@8           :PTR ; close Go To dialog
+EXTERN _imp__DragQueryFileA@16     :PTR ; query drag file
+EXTERN _imp__DragFinish@4          :PTR ; finish drag
 EXTERN _imp__SetFocus@4            :PTR ; focus edit control after commands
 EXTERN _imp__ExitProcess@4         :PTR ; terminate process cleanly
 
@@ -1847,7 +1849,7 @@ MainEntry proc NEAR
     push    WS_OVERLAPPEDWINDOW or WS_VISIBLE
     push    OFFSET ClassName
     push    OFFSET ClassName
-    push    0
+    push    WS_EX_ACCEPTFILES
     call    [_imp__CreateWindowExA@48]
 
     ; if create window ok, save hwnd / else exit
@@ -2662,8 +2664,32 @@ ENDIF
         xor     eax, eax
         ret
 
-    ; check for WM_DESTROY
+    ; check for WM_DROPFILES
     NotWMSize:
+        cmp     uMsg, WM_DROPFILES
+        jne     NotWMDropFiles
+        call    MaybeSaveChanges
+        test    eax, eax
+        je      DropDone
+        push    MAX_CMD_PATH
+        push    OFFSET CmdFile
+        push    0
+        push    wParam
+        call    [_imp__DragQueryFileA@16]
+        test    eax, eax
+        je      DropDone
+        call    LoadStartupFile
+        xor     eax, eax
+        mov     fDirty, eax
+        call    ApplyTitle
+    DropDone:
+        push    wParam
+        call    [_imp__DragFinish@4]
+        xor     eax, eax
+        ret
+
+    ; check for WM_DESTROY
+    NotWMDropFiles:
         cmp     uMsg, WM_DESTROY
         jne     NotWMDestroy
 
