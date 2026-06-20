@@ -69,8 +69,6 @@ EM_SETTARGETDEVICE  equ WM_USER+72 ; Rich Edit: wrapping target width
 SCF_ALL             equ 00000004h  ; Rich Edit: apply format to all text
 ENM_CHANGE          equ 00000001h  ; Rich Edit: send EN_CHANGE notifications
 CFM_FACE            equ 20000000h  ; Rich Edit: use font face name
-MAX_CMD_PATH        equ 128        ; holds startup file path from dropped file
-MAX_TITLE           equ 128        ; holds window title text (file name and if dirty * )
 IDM_SAVE            equ 0E100h     ; Save menu ID (WM_SYSCOMMAND)
 IDM_FILE_NEW        equ 0E200h
 IDM_FILE_EXIT       equ 0E201h
@@ -335,8 +333,8 @@ RichFont    dd 92                   ; CHARFORMATW size
 EmptyText   db ?
 hMain       dd ?                    ; main window handle
 hEdit       dd ?                    ; EDIT control handle
-CmdFile     db MAX_CMD_PATH dup (?) ; startup file path buffer
-TitleBuf    db MAX_TITLE dup    (?) ; window title buffer
+CmdFile     db MAX_PATH dup (?)     ; startup file path buffer
+TitleBuf    db MAX_PATH dup (?)     ; window title buffer
 BytesRead   dd ?                    ; bytes read from file
 fDirty      dd ?                    ; EDIT modified flag
 DateBuf     db 32 dup (?)
@@ -503,7 +501,7 @@ ParseStartupFile proc NEAR
         je      NoArg
 
         lea     edi, CmdFile
-        mov     ecx, MAX_CMD_PATH-1
+        mov     ecx, MAX_PATH-1
 
         cmp     byte ptr [esi], '"'
         jne     CopyBare
@@ -583,7 +581,7 @@ PickOpenFile proc NEAR
     mov     ofn.hwndOwner, eax
     mov     ofn.lpstrFilter, OFFSET FileFilter
     mov     ofn.lpstrFile, OFFSET CmdFile
-    mov     ofn.nMaxFile, MAX_CMD_PATH
+    mov     ofn.nMaxFile, MAX_PATH
     mov     ofn.Flags, OFN_FILEMUSTEXIST or OFN_PATHMUSTEXIST or OFN_HIDEREADONLY
 
     lea     eax, ofn
@@ -609,7 +607,7 @@ PickSaveFile proc NEAR
     mov     ofn.hwndOwner, eax
     mov     ofn.lpstrFilter, OFFSET FileFilter
     mov     ofn.lpstrFile, OFFSET CmdFile
-    mov     ofn.nMaxFile, MAX_CMD_PATH
+    mov     ofn.nMaxFile, MAX_PATH
     mov     ofn.Flags, OFN_PATHMUSTEXIST or OFN_HIDEREADONLY or OFN_OVERWRITEPROMPT
 
     lea     eax, ofn
