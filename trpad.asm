@@ -68,8 +68,6 @@ EM_SETTARGETDEVICE  equ WM_USER+72 ; Rich Edit: wrapping target width
 SCF_ALL             equ 00000004h  ; Rich Edit: apply format to all text
 ENM_CHANGE          equ 00000001h  ; Rich Edit: send EN_CHANGE notifications
 CFM_FACE            equ 20000000h  ; Rich Edit: use font face name
-MAX_CMD_PATH        equ 128        ; holds startup file path from dropped file
-MAX_TITLE           equ 128        ; holds window title text (file name and if dirty * )
 IDM_SAVE            equ 0E100h     ; Save menu ID (WM_SYSCOMMAND)
 IDM_FILE_NEW        equ 0E200h
 IDM_FILE_EXIT       equ 0E201h
@@ -225,14 +223,6 @@ ClassName   db ".",0                ; save bytes here (seems to work)
 RichDll     db "Msftedit",0         ; Rich Edit DLL (no ext saves those bytes)
 EditClass   db "RICHEDIT50W",0      ; modern Rich Edit control from WinAPI
 SaveText    db "Save",0             ; button added to system menu
-EmptyText   db 0
-
-hMain       dd 0                    ; main window handle
-hEdit       dd 0                    ; EDIT control handle
-CmdFile     db MAX_CMD_PATH dup (0) ; startup file path buffer
-TitleBuf    db MAX_TITLE dup    (0) ; window title buffer
-BytesRead   dd 0                    ; bytes read from file
-fDirty      dd 0                    ; EDIT modified flag
 fWrap       dd 1                    ; word wrap state
 
 UntitledText db "Untitled",0
@@ -276,36 +266,24 @@ AboutText   db "TinyRetroPad - tiny notepad-style editor",0
 SaveCap     db "TinyRetroPad",0
 SaveAskText db "Save changes?",0
 SpaceText   db " ",0
-DateBuf     db 32 dup (0)
-TimeBuf     db 32 dup (0)
 FileFilter  db "All Files",0,"*.*",0,0
 
 FindMsgStr  db "commdlg_FindReplace",0
-FindWhat    db 128 dup (0)         ; Find What text buffer
-ReplaceWith db 128 dup (0)         ; Replace With text buffer
-fr          FINDREPLACEA <>        ; shared find/replace request
-hFindDlg    dd 0                   ; modeless find/replace dialog HWND
-uFindMsg    dd 0                   ; registered FINDMSGSTRING message
 
 StaticClass db "STATIC",0          ; built-in class for status bar pane
 DocName     db "TinyRetroPad",0    ; print job document name
 LnColFmt    db "  Ln %d, Col %d",0 ; status bar Ln/Col format
-StatusBuf   db 48 dup (0)          ; formatted Ln/Col text
-hStatus     dd 0                   ; status bar window handle
 fStatus     dd 1                   ; status bar visible flag (default ON)
 
 IF FEAT_LINENUMBERS
-fLineNum    dd 0                   ; line-number gutter visible flag (default OFF)
 LnNumFmt    db "%d",0              ; gutter number format
 MLineNum    db "Line &Numbers",0   ; View menu label
 ENDIF
 
 IF FEAT_DARKMODE
-fDark       dd 0                   ; dark mode flag (default OFF)
 MDarkMode   db "Dark &Mode",0      ; View menu label
 ENDIF
 
-hInst       dd 0                   ; module handle (for dialogs)
 OpenVerb    db "open",0            ; ShellExecute verb
 HelpUrl     db "https://github.com/davepl",0
 
@@ -349,6 +327,31 @@ RichFont    dd 92                   ; CHARFORMATW size
             dw 24 dup (0)
             dw 0                    ; CHARFORMATW padding
 
+.DATA?
+
+EmptyText   db ?
+hMain       dd ?                    ; main window handle
+hEdit       dd ?                    ; EDIT control handle
+CmdFile     db MAX_PATH dup (?)     ; startup file path buffer
+TitleBuf    db MAX_PATH dup (?)     ; window title buffer
+BytesRead   dd ?                    ; bytes read from file
+fDirty      dd ?                    ; EDIT modified flag
+DateBuf     db 32 dup (?)
+TimeBuf     db 32 dup (?)
+FindWhat    db 128 dup (?)         ; Find What text buffer
+ReplaceWith db 128 dup (?)         ; Replace With text buffer
+fr          FINDREPLACEA <>        ; shared find/replace request
+hFindDlg    dd ?                   ; modeless find/replace dialog HWND
+uFindMsg    dd ?                   ; registered FINDMSGSTRING message
+StatusBuf   db 48 dup (?)          ; formatted Ln/Col text
+hStatus     dd ?                   ; status bar window handle
+IF FEAT_LINENUMBERS
+fLineNum    dd ?                   ; line-number gutter visible flag (default OFF)
+ENDIF
+IF FEAT_DARKMODE
+fDark       dd ?                   ; dark mode flag
+ENDIF
+hInst       dd ?                   ; module handle (for dialogs)
 
 ;----------------------------------------------;
 .CODE ; Here is where the program itself lives ;
@@ -497,7 +500,7 @@ ParseStartupFile proc NEAR
         je      NoArg
 
         lea     edi, CmdFile
-        mov     ecx, MAX_CMD_PATH-1
+        mov     ecx, MAX_PATH-1
 
         cmp     byte ptr [esi], '"'
         jne     CopyBare
@@ -577,7 +580,7 @@ PickOpenFile proc NEAR
     mov     ofn.hwndOwner, eax
     mov     ofn.lpstrFilter, OFFSET FileFilter
     mov     ofn.lpstrFile, OFFSET CmdFile
-    mov     ofn.nMaxFile, MAX_CMD_PATH
+    mov     ofn.nMaxFile, MAX_PATH
     mov     ofn.Flags, OFN_FILEMUSTEXIST or OFN_PATHMUSTEXIST or OFN_HIDEREADONLY
 
     lea     eax, ofn
@@ -603,7 +606,7 @@ PickSaveFile proc NEAR
     mov     ofn.hwndOwner, eax
     mov     ofn.lpstrFilter, OFFSET FileFilter
     mov     ofn.lpstrFile, OFFSET CmdFile
-    mov     ofn.nMaxFile, MAX_CMD_PATH
+    mov     ofn.nMaxFile, MAX_PATH
     mov     ofn.Flags, OFN_PATHMUSTEXIST or OFN_HIDEREADONLY or OFN_OVERWRITEPROMPT
 
     lea     eax, ofn
