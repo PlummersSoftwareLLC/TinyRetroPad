@@ -1796,6 +1796,11 @@ SaveFile endp ;end SaveFile proc
 ;;;;;;;;;;;;;;;;;;;;;;;
 MainEntry proc NEAR
 
+IF FEAT_HIDPI
+    push    0FFFFFFFCh
+    call    [_imp__SetProcessDpiAwarenessContext@4]
+ENDIF
+
     LOCAL   hInstance: HINSTANCE
     LOCAL   wc:        WNDCLASS
     LOCAL   msg:       MSG
