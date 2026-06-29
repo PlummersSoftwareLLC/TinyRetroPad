@@ -148,7 +148,6 @@ ENDIF
 .DATA
 
 EXTERN _imp__CreateWindowExA@48    :PTR ; create main window / EDIT control
-EXTERN _imp__GetModuleHandleA@4    :PTR ; get HINSTANCE
 EXTERN _imp__LoadLibraryA@4        :PTR ; load modern Rich Edit DLL
 EXTERN _imp__RegisterClassA@4      :PTR ; rgstr wndw class (was RegisterClassExA@4)
 EXTERN _imp__GetMessageA@16        :PTR ; message loop get
@@ -220,6 +219,8 @@ IF FEAT_DARKMODE
 EXTERN _imp__GetMenu@4             :PTR ; menu bar for the check mark
 EXTERN _imp__CheckMenuItem@12      :PTR ; check/uncheck Dark Mode
 ENDIF
+
+EXTERN __ImageBase:WORD             ; module base
 
 ClassName   db ".",0                ; save bytes here (seems to work)
 RichDll     db "Msftedit",0         ; Rich Edit DLL (no ext saves those bytes)
@@ -305,7 +306,6 @@ fDark       dd 0                   ; dark mode flag (default OFF)
 MDarkMode   db "Dark &Mode",0      ; View menu label
 ENDIF
 
-hInst       dd 0                   ; module handle (for dialogs)
 OpenVerb    db "open",0            ; ShellExecute verb
 HelpUrl     db "https://github.com/davepl",0
 
@@ -1275,7 +1275,7 @@ GoToDlg proc NEAR
     push    OFFSET GoToProc
     push    hMain
     push    OFFSET GoToTmpl
-    push    hInst
+    push    OFFSET __ImageBase
     call    [_imp__DialogBoxIndirectParamA@20]
 
     ; eax = 1-based line, 0 = cancel/invalid
@@ -1792,15 +1792,8 @@ SaveFile endp ;end SaveFile proc
 ;;;;;;;;;;;;;;;;;;;;;;;
 MainEntry proc NEAR
 
-    LOCAL   hInstance: HINSTANCE
     LOCAL   wc:        WNDCLASS
     LOCAL   msg:       MSG
-
-    ; get program HINSTANCE
-    push    NULL
-    call    [_imp__GetModuleHandleA@4]
-    mov     hInstance, eax
-    mov     hInst, eax
 
     ; load modern Rich Edit control library
     push    OFFSET RichDll
@@ -1822,7 +1815,7 @@ MainEntry proc NEAR
     ;mov     wc.cbSize, SIZEOF WNDCLASSEX
     
     mov     wc.lpfnWndProc, OFFSET WndProc
-    mov     eax, hInstance
+    mov     eax, OFFSET __ImageBase
     mov     wc.hInstance, eax
     mov     wc.lpszClassName, OFFSET ClassName
 
@@ -1836,7 +1829,7 @@ MainEntry proc NEAR
 
     ; create main application window
     push    NULL
-    push    hInstance
+    push    wc.hInstance
     push    NULL
     push    NULL
     push    WindowHeight
