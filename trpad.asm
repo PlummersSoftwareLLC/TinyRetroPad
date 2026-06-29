@@ -33,6 +33,7 @@
 ; Added VIEW Status Bar (Ln/Col) - 2476 Bytes
 ; Added DIALOG based Feature - 2686 Bytes
 ; Added KEYBOARD accelerators - 2794 Bytes
+; Added DPI awareness - 2794 Bytes
 ; Compiler directives and includes:
  
 .386                       ; Full 80386 instruction set and mode
