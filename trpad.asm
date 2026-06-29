@@ -47,7 +47,7 @@ option casemap:none        ; Preserve the case of system identifiers but not our
 ; only costs space when it is switched on.
 FEAT_LINENUMBERS = 0       ; View > Line Numbers gutter (default OFF)
 FEAT_DARKMODE    = 0       ; View > Dark Mode (default OFF)
-FEAT_HIDPI       = 0       ; View > High DPI (default OFF)
+FEAT_HIDPI       = 1       ; View > High DPI (default OFF)
 ; ==========================================================
 
 ; Include files - headers and libs that we need for
@@ -1797,14 +1797,14 @@ SaveFile endp ;end SaveFile proc
 ;;;;;;;;;;;;;;;;;;;;;;;
 MainEntry proc NEAR
 
+    LOCAL   hInstance: HINSTANCE
+    LOCAL   wc:        WNDCLASS
+    LOCAL   msg:       MSG
+
 IF FEAT_HIDPI
     push    0FFFFFFFCh
     call    [_imp__SetProcessDpiAwarenessContext@4]
 ENDIF
-
-    LOCAL   hInstance: HINSTANCE
-    LOCAL   wc:        WNDCLASS
-    LOCAL   msg:       MSG
 
     ; get program HINSTANCE
     push    NULL
