@@ -1,0 +1,95 @@
+name: Build TinyRetroPad
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install MASM32 SDK
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri "https://www.masm32.com/download/masm32v11r.zip" -OutFile masm32v11r.zip
+          Expand-Archive -Path masm32v11r.zip -DestinationPath masm32_setup
+          7z x masm32_setup\install.exe -omasm32_stage1 -y
+          7z x masm32_stage1\.data -oC:\masm32 -y
+          if (-not (Test-Path "C:\masm32\bin\ml.exe")) {
+              throw "MASM32 installation failed - ml.exe not found"
+          }
+          Write-Host "MASM32 installed successfully"
+
+      - name: Download Crinkler
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri "https://github.com/runestubbe/Crinkler/releases/download/v3.0a/crinkler30a.zip" -OutFile crinkler.zip
+          Expand-Archive -Path crinkler.zip -DestinationPath crinkler_extract
+          $crinkler = Get-ChildItem -Path crinkler_extract -Recurse -Filter "crinkler.exe" | Select-Object -First 1
+          if (-not $crinkler) { throw "Crinkler not found in archive" }
+          Copy-Item $crinkler.FullName -Destination .\crinkler.exe
+
+      - name: Find Windows SDK lib path
+        id: winsdk
+        shell: pwsh
+        run: |
+          $sdkBase = "C:\Program Files (x86)\Windows Kits\10\Lib"
+          $sdkVersion = Get-ChildItem $sdkBase -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          $libPath = Join-Path $sdkVersion.FullName "um\x86"
+          if (-not (Test-Path $libPath)) { throw "Windows SDK x86 lib path not found at $libPath" }
+          Write-Host "Windows SDK lib path: $libPath"
+          "SDK_LIB_PATH=$libPath" | Out-File -Append $env:GITHUB_OUTPUT
+
+      - name: Assemble
+        shell: cmd
+        run: C:\masm32\bin\ml.exe /nologo /c /coff /Cp /IC:\masm32\include trpad.asm
+
+      - name: Link with Crinkler
+        shell: cmd
+        run: |
+          crinkler.exe trpad.obj ^
+            /OUT:trpad.exe ^
+            /ENTRY:MainEntry ^
+            /SUBSYSTEM:WINDOWS ^
+            /NOINITIALIZERS ^
+            /TINYIMPORT ^
+            /ORDERTRIES:2000 ^
+            /LIBPATH:"${{ steps.winsdk.outputs.SDK_LIB_PATH }}" ^
+            kernel32.lib user32.lib shell32.lib comdlg32.lib gdi32.lib
+
+      - name: Show binary size
+        shell: pwsh
+        run: |
+          $size = (Get-Item trpad.exe).Length
+          Write-Host "trpad.exe size: $size bytes"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: TinyRetroPad
+          path: trpad.exe
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: TinyRetroPad
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: trpad.exe
+          generate_release_notes: true
