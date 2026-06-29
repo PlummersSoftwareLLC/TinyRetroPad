@@ -47,6 +47,7 @@ option casemap:none        ; Preserve the case of system identifiers but not our
 ; only costs space when it is switched on.
 FEAT_LINENUMBERS = 0       ; View > Line Numbers gutter (default OFF)
 FEAT_DARKMODE    = 0       ; View > Dark Mode (default OFF)
+FEAT_HIDPI       = 1       ; View > High DPI (default ON)
 ; ==========================================================
 
 ; Include files - headers and libs that we need for
@@ -219,6 +220,10 @@ ENDIF
 IF FEAT_DARKMODE
 EXTERN _imp__GetMenu@4             :PTR ; menu bar for the check mark
 EXTERN _imp__CheckMenuItem@12      :PTR ; check/uncheck Dark Mode
+ENDIF
+
+IF FEAT_HIDPI
+EXTERN _imp__SetProcessDpiAwarenessContext@4 :PTR ; set DPI awareness
 ENDIF
 
 ClassName   db ".",0                ; save bytes here (seems to work)
@@ -1795,6 +1800,12 @@ MainEntry proc NEAR
     LOCAL   hInstance: HINSTANCE
     LOCAL   wc:        WNDCLASS
     LOCAL   msg:       MSG
+
+IF FEAT_HIDPI
+    ; enable per-monitor DPI awareness (v2)
+    push    0FFFFFFFCh
+    call    [_imp__SetProcessDpiAwarenessContext@4]
+ENDIF
 
     ; get program HINSTANCE
     push    NULL
