@@ -2003,8 +2003,8 @@ ENDIF
     jne     NotWMCreate
 
     ; EDIT control (class "RICHEDIT50W")
-    mov     eax, WS_CHILD or WS_VISIBLE or WS_BORDER or ES_LEFT \
-                 or ES_MULTILINE or ES_AUTOVSCROLL or WS_VSCROLL
+    mov     eax, WS_CHILD or WS_VISIBLE or ES_LEFT or ES_MULTILINE \
+                 or ES_AUTOVSCROLL or WS_VSCROLL or WS_HSCROLL
 
     ; create EDIT control
     EditStyleReady:
